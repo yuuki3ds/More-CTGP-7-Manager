@@ -10,9 +10,12 @@
 #include <3ds.h>
 #include <citro2d.h>
 #include <stdbool.h>
+#include <ctype.h>
+#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <curl/curl.h>
 #include <sys/stat.h>
 
 #define APP_VERSION "Ver.0.2"
@@ -27,6 +30,10 @@
 
 #define CFG_DIR  "sdmc:/3ds/CharSwitcher"
 #define CFG_PATH CFG_DIR "/config.ini"
+
+// URL of the pack version file on GitHub (raw). Override with
+// pack_url=... in config.ini. (A URL containing "OWNER" is treated as unset.)
+#define PACK_URL_DEFAULT "https://raw.githubusercontent.com/yuuki3ds/More-CTGP-7-Character-Switcher/main/version/morever.ini"
 
 // ------------------------------------------------------------ strings
 
@@ -65,6 +72,11 @@ typedef struct {
     const char *launch;
     const char *launch_fail;
     const char *pack_label;
+    const char *set_check;
+    const char *update_msg;
+    const char *current_label;
+    const char *latest_label;
+    const char *ok;
 } Strings;
 
 static const Strings STR_EN = {
@@ -102,6 +114,11 @@ static const Strings STR_EN = {
     "Launch CTGP-7",
     "CTGP-7 was not found.\nInstall CTGP-7, or set ctgp7_id in\nsdmc:/3ds/CharSwitcher/config.ini",
     "Pack version",
+    "Check pack updates at startup",
+    "A pack update is available.",
+    "Current",
+    "Latest",
+    "OK",
 };
 
 static const Strings STR_JA = {
@@ -139,6 +156,11 @@ static const Strings STR_JA = {
     "CTGP-7を起動",
     "CTGP-7が見つかりません。\nCTGP-7をインストールするか、\nsdmc:/3ds/CharSwitcher/config.ini の\nctgp7_id を設定してください。",
     "パックバージョン",
+    "起動時にパックの更新を確認",
+    "パックのアップデートがあります。",
+    "現在",
+    "最新",
+    "OK",
 };
 
 // ------------------------------------------------------------ config
@@ -148,6 +170,8 @@ typedef struct {
     int confirm;     // 0/1
     int exit_after;  // 0/1
     unsigned long long ctgp7_id;  // 0 = not known yet (auto-detect on first launch)
+    int check_update;             // check pack version on GitHub at startup (0/1)
+    char pack_url[200];
 } Config;
 
 static void config_defaults(Config *c) {
@@ -155,22 +179,29 @@ static void config_defaults(Config *c) {
     c->confirm = 1;
     c->exit_after = 0;
     c->ctgp7_id = 0;
+    c->check_update = 1;
+    snprintf(c->pack_url, sizeof c->pack_url, "%s", PACK_URL_DEFAULT);
 }
 
 static void config_load(Config *c) {
     config_defaults(c);
     FILE *f = fopen(CFG_PATH, "r");
     if (!f) return;
-    char key[32], val[40];
-    while (fscanf(f, " %31[^=]=%39s", key, val) == 2) {
+    char key[32], val[200];
+    while (fscanf(f, " %31[^=]=%199s", key, val) == 2) {
         if (!strcmp(key, "ctgp7_id")) {
             c->ctgp7_id = strtoull(val, NULL, 16);
+            continue;
+        }
+        if (!strcmp(key, "pack_url")) {
+            snprintf(c->pack_url, sizeof c->pack_url, "%s", val);
             continue;
         }
         int v = atoi(val);
         if (!strcmp(key, "lang") && v >= 0 && v <= 2) c->lang = v;
         else if (!strcmp(key, "confirm")) c->confirm = v ? 1 : 0;
         else if (!strcmp(key, "exit_after")) c->exit_after = v ? 1 : 0;
+        else if (!strcmp(key, "check_update")) c->check_update = v ? 1 : 0;
     }
     fclose(f);
 }
@@ -180,8 +211,10 @@ static void config_save(const Config *c) {
     mkdir(CFG_DIR, 0777);
     FILE *f = fopen(CFG_PATH, "w");
     if (!f) return;
-    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\nctgp7_id=%016llX\n",
-            c->lang, c->confirm, c->exit_after, c->ctgp7_id);
+    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\nctgp7_id=%016llX\ncheck_update=%d\n",
+            c->lang, c->confirm, c->exit_after, c->ctgp7_id, c->check_update);
+    if (strcmp(c->pack_url, PACK_URL_DEFAULT) != 0)     // only persist a custom URL
+        fprintf(f, "pack_url=%s\n", c->pack_url);
     fclose(f);
 }
 
@@ -210,14 +243,18 @@ static bool has_ver_key(const char *key) {
 // Reads the pack version from morever.ini.
 // Accepted: "version=1.2.3" (any key containing "ver"), or just a bare "1.2.3" line.
 // Lines starting with ; # [ are ignored. Leaves out[0] == '\0' if unavailable.
-static void load_pack_version(char *out, size_t n) {
+static void parse_version_text(const char *text, char *out, size_t n) {
     out[0] = '\0';
-    FILE *f = fopen(PACKVER_PATH, "r");
-    if (!f) return;
-
     char line[160], first[64] = "";
     bool first_line = true;
-    while (fgets(line, sizeof line, f)) {
+    const char *cur = text;
+    while (*cur) {
+        size_t len = strcspn(cur, "\n");
+        size_t cp = len < sizeof line - 1 ? len : sizeof line - 1;
+        memcpy(line, cur, cp);
+        line[cp] = '\0';
+        cur += len;
+        if (*cur == '\n') cur++;
         char *p = line;
         if (first_line) {           // skip UTF-8 BOM
             first_line = false;
@@ -234,7 +271,6 @@ static void load_pack_version(char *out, size_t n) {
             if (!*val) continue;
             if (has_ver_key(key)) {
                 snprintf(out, n, "%s", val);
-                fclose(f);
                 return;
             }
             if (!first[0]) snprintf(first, sizeof first, "%s", val);
@@ -242,8 +278,164 @@ static void load_pack_version(char *out, size_t n) {
             snprintf(first, sizeof first, "%s", p);
         }
     }
-    fclose(f);
     snprintf(out, n, "%s", first);
+}
+
+static void load_pack_version(char *out, size_t n) {
+    out[0] = '\0';
+    FILE *f = fopen(PACKVER_PATH, "r");
+    if (!f) return;
+    char text[512];
+    size_t got = fread(text, 1, sizeof text - 1, f);
+    fclose(f);
+    text[got] = '\0';
+    parse_version_text(text, out, n);
+}
+
+// ------------------------------------------------------------ pack update check (GitHub)
+
+static bool has_digit(const char *s) {
+    for (; *s; s++) if (isdigit((u8)*s)) return true;
+    return false;
+}
+
+static int next_num(const char **s) {
+    while (**s && !isdigit((u8)**s)) (*s)++;
+    if (!**s) return -1;
+    long v = 0;
+    while (isdigit((u8)**s)) {
+        v = v * 10 + (**s - '0');
+        if (v > 100000000L) v = 100000000L;
+        (*s)++;
+    }
+    return (int)v;
+}
+
+// >0: a is newer than b, <0: older, 0: equal  (compares 1.9 < 1.10 numerically)
+static int version_cmp(const char *a, const char *b) {
+    for (;;) {
+        int x = next_num(&a), y = next_num(&b);
+        if (x < 0 && y < 0) return 0;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        if (x != y) return x > y ? 1 : -1;
+    }
+}
+
+enum { CHK_IDLE = 0, CHK_RUNNING, CHK_DONE, CHK_FAIL };
+
+typedef struct {
+    char url[200];
+    char remote[64];
+    volatile int state;
+    volatile bool quit;
+} CheckCtx;
+
+static CheckCtx g_chk;
+static u32 *g_soc_buf = NULL;
+static bool g_net_ready = false;
+static bool g_romfs = false;
+
+typedef struct { char buf[256]; size_t len; } Resp;
+
+static size_t write_cb(char *p, size_t size, size_t nmemb, void *user) {
+    Resp *r = (Resp *)user;
+    size_t total = size * nmemb;
+    size_t room = sizeof r->buf - 1 - r->len;
+    size_t cp = total < room ? total : room;
+    memcpy(r->buf + r->len, p, cp);
+    r->len += cp;
+    return total;                       // never abort on oversize; extra is dropped
+}
+
+static int xfer_cb(void *user, curl_off_t a, curl_off_t b, curl_off_t c, curl_off_t d) {
+    (void)a; (void)b; (void)c; (void)d;
+    return ((CheckCtx *)user)->quit ? 1 : 0;   // non-zero aborts the transfer
+}
+
+static const char *find_cacert(void) {
+    static const char *paths[] = { "romfs:/cacert.pem", CFG_DIR "/cacert.pem" };
+    for (int i = 0; i < 2; i++) {
+        FILE *f = fopen(paths[i], "rb");
+        if (f) { fclose(f); return paths[i]; }
+    }
+    return NULL;
+}
+
+static void check_thread(void *arg) {
+    CheckCtx *ctx = (CheckCtx *)arg;
+    const char *ca = find_cacert();
+    CURL *c = ca ? curl_easy_init() : NULL;
+    if (!c) { ctx->state = CHK_FAIL; return; }
+
+    Resp r = { {0}, 0 };
+    curl_easy_setopt(c, CURLOPT_URL, ctx->url);
+    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 6L);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 12L);
+    curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(c, CURLOPT_USERAGENT, "CharSwitcher/" APP_VERSION);
+    curl_easy_setopt(c, CURLOPT_CAINFO, ca);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, write_cb);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &r);
+    curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, xfer_cb);
+    curl_easy_setopt(c, CURLOPT_XFERINFODATA, ctx);
+
+    CURLcode rc = curl_easy_perform(c);
+    long code = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_cleanup(c);
+
+    if (rc == CURLE_OK && code == 200 && r.len > 0) {
+        r.buf[r.len] = '\0';
+        parse_version_text(r.buf, ctx->remote, sizeof ctx->remote);
+        ctx->state = ctx->remote[0] ? CHK_DONE : CHK_FAIL;
+    } else {
+        ctx->state = CHK_FAIL;
+    }
+}
+
+// Starts the background check. Returns false if it could not be started.
+static bool net_start(const char *url) {
+    g_soc_buf = (u32 *)memalign(0x1000, 0x100000);
+    if (!g_soc_buf) return false;
+    if (R_FAILED(socInit(g_soc_buf, 0x100000))) {
+        free(g_soc_buf);
+        g_soc_buf = NULL;
+        return false;
+    }
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    g_net_ready = true;
+
+    snprintf(g_chk.url, sizeof g_chk.url, "%s", url);
+    g_chk.remote[0] = '\0';
+    g_chk.quit = false;
+    g_chk.state = CHK_RUNNING;
+
+    s32 prio = 0x30;
+    svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
+    prio -= 1;
+    if (prio < 0x18) prio = 0x18;
+
+    Thread t = threadCreate(check_thread, &g_chk, 128 * 1024, prio, -1, true);
+    if (!t) { g_chk.state = CHK_FAIL; return false; }
+    return true;
+}
+
+static void net_stop(void) {
+    if (!g_net_ready) return;
+    g_chk.quit = true;
+    for (int i = 0; i < 40 && g_chk.state == CHK_RUNNING; i++)
+        svcSleepThread(50000000LL);                    // wait up to ~2 s
+    if (g_chk.state != CHK_RUNNING) {                  // otherwise just leak; we are exiting
+        curl_global_cleanup();
+        socExit();
+        free(g_soc_buf);
+    }
+    g_net_ready = false;
 }
 
 // ------------------------------------------------------------ folder logic
@@ -459,14 +651,15 @@ static const Rect MAIN_R[MAIN_N] = {
     {20, 202, 280, 30},   // Settings
 };
 
-#define SET_N 6
+#define SET_N 7
 static const Rect SET_R[SET_N] = {
-    {20,  34, 280, 28},   // Language
-    {20,  66, 280, 28},   // Confirm
-    {20,  98, 280, 28},   // Exit after
-    {20, 130, 280, 28},   // Reset
-    {20, 162, 280, 28},   // About
-    {20, 198, 280, 32},   // Back
+    {20,  30, 280, 25},   // Language
+    {20,  59, 280, 25},   // Confirm
+    {20,  88, 280, 25},   // Exit after
+    {20, 117, 280, 25},   // Check pack updates
+    {20, 146, 280, 25},   // Reset
+    {20, 175, 280, 25},   // About
+    {20, 206, 280, 28},   // Back
 };
 
 static const Rect ABOUT_BACK = {20, 198, 280, 32};
@@ -474,6 +667,8 @@ static const Rect ABOUT_BACK = {20, 198, 280, 32};
 static const Rect DLG_BOX = { 30, 64, 260, 112};
 static const Rect DLG_YES = { 48, 124, 100, 36};
 static const Rect DLG_NO  = {172, 124, 100, 36};
+static const Rect UPD_BOX = { 12,  46, 296, 150};
+static const Rect DLG_OK  = {110, 150, 100, 34};
 
 static const Strings *get_strings(const Config *c, bool sys_ja) {
     if (c->lang == 1) return &STR_JA;
@@ -524,6 +719,14 @@ int main(void) {
 
     bool running = true;
 
+    // ---- pack update check (background) ----
+    bool upd_dialog = false;
+    char latest[64] = "";
+    bool chk_pending = false;
+    g_romfs = R_SUCCEEDED(romfsInit());
+    if (cfg.check_update && cfg.pack_url[0] && !strstr(cfg.pack_url, "OWNER"))
+        chk_pending = net_start(cfg.pack_url);
+
     // ---- actions (as small lambdas via nested blocks would be GNU-only; use inline code) ----
     while (aptMainLoop() && running) {
         hidScanInput();
@@ -536,12 +739,29 @@ int main(void) {
 
         const Strings *S = get_strings(&cfg, sys_ja);
 
+        // ---------- pack update check result ----------
+        if (chk_pending) {
+            if (g_chk.state == CHK_DONE) {
+                chk_pending = false;
+                load_pack_version(pack_ver, sizeof pack_ver);
+                if (has_digit(pack_ver) && has_digit(g_chk.remote) &&
+                    version_cmp(g_chk.remote, pack_ver) > 0) {
+                    snprintf(latest, sizeof latest, "%s", g_chk.remote);
+                    upd_dialog = true;
+                }
+            } else if (g_chk.state == CHK_FAIL) {
+                chk_pending = false;     // offline etc.: stay silent
+            }
+        }
+
         // ---------- input ----------
         int do_slot = 0;          // slot to request a switch to (1-3), 0 = none
         bool do_perform = false;
         bool do_launch = false;
 
-        if (dialog) {
+        if (upd_dialog) {
+            if ((down & (KEY_A | KEY_B)) || (tap && hit(DLG_OK, tp))) upd_dialog = false;
+        } else if (dialog) {
             if (down & (KEY_LEFT | KEY_RIGHT)) dlg_yes = !dlg_yes;
             if (down & KEY_B) dialog = false;
             if (down & KEY_A) {
@@ -590,16 +810,17 @@ int main(void) {
                     break;
                 case 1: cfg.confirm = !cfg.confirm; changed = true; break;
                 case 2: cfg.exit_after = !cfg.exit_after; changed = true; break;
-                case 3:
+                case 3: cfg.check_update = !cfg.check_update; changed = true; break;
+                case 4:
                     if (!(down & (KEY_LEFT | KEY_RIGHT))) { config_defaults(&cfg); changed = true; }
                     break;
-                case 4:
+                case 5:
                     if (!(down & (KEY_LEFT | KEY_RIGHT))) {
                         load_pack_version(pack_ver, sizeof pack_ver);
                         screen = SCR_ABOUT;
                     }
                     break;
-                case 5:
+                case 6:
                     if (!(down & (KEY_LEFT | KEY_RIGHT))) screen = SCR_MAIN;
                     break;
                 }
@@ -718,9 +939,11 @@ int main(void) {
                         !dialog && set_cursor == 1, false, true, false);
             draw_button(SET_R[2], S->set_exit, cfg.exit_after ? S->on : S->off,
                         !dialog && set_cursor == 2, false, true, false);
-            draw_button(SET_R[3], S->set_reset, "", !dialog && set_cursor == 3, false, true, true);
-            draw_button(SET_R[4], S->about, "", !dialog && set_cursor == 4, false, true, true);
-            draw_button(SET_R[5], S->back, "", !dialog && set_cursor == 5, false, true, true);
+            draw_button(SET_R[3], S->set_check, cfg.check_update ? S->on : S->off,
+                        !dialog && set_cursor == 3, false, true, false);
+            draw_button(SET_R[4], S->set_reset, "", !dialog && set_cursor == 4, false, true, true);
+            draw_button(SET_R[5], S->about, "", !dialog && set_cursor == 5, false, true, true);
+            draw_button(SET_R[6], S->back, "", !dialog && set_cursor == 6, false, true, true);
         }
 
         if (dialog) {
@@ -733,8 +956,23 @@ int main(void) {
             draw_button(DLG_NO, S->no, "", !dlg_yes, false, true, true);
         }
 
+        if (upd_dialog) {
+            C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
+            C2D_DrawRectSolid(UPD_BOX.x - 2, UPD_BOX.y - 2, 0.5f, UPD_BOX.w + 4, UPD_BOX.h + 4, COL_YELLOW);
+            C2D_DrawRectSolid(UPD_BOX.x, UPD_BOX.y, 0.5f, UPD_BOX.w, UPD_BOX.h, COL_BG);
+            draw_text_center(S->update_msg, 160, UPD_BOX.y + 14, 0.55f, COL_YELLOW);
+            snprintf(line, sizeof line, "%s: %s", S->current_label, pack_ver);
+            draw_text_center(line, 160, UPD_BOX.y + 54, 0.55f, COL_WHITE);
+            snprintf(line, sizeof line, "%s: %s", S->latest_label, latest);
+            draw_text_center(line, 160, UPD_BOX.y + 80, 0.55f, COL_GREEN);
+            draw_button(DLG_OK, S->ok, "", true, false, true, true);
+        }
+
         C3D_FrameEnd(0);
     }
+
+    net_stop();
+    if (g_romfs && g_chk.state != CHK_RUNNING) romfsExit();
 
     C2D_TextBufDelete(g_buf);
     C2D_FontFree(g_font);

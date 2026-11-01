@@ -110,7 +110,18 @@ main.o: \
  C:/devkitPro/libctru/include/c2d/spritesheet.h \
  C:/devkitPro/libctru/include/c2d/sprite.h \
  C:/devkitPro/libctru/include/c2d/text.h \
- C:/devkitPro/libctru/include/c2d/font.h
+ C:/devkitPro/libctru/include/c2d/font.h \
+ C:/devkitPro/portlibs/3ds/include/curl/curl.h \
+ C:/devkitPro/portlibs/3ds/include/curl/curlver.h \
+ C:/devkitPro/portlibs/3ds/include/curl/system.h \
+ C:/devkitPro/portlibs/3ds/include/curl/easy.h \
+ C:/devkitPro/portlibs/3ds/include/curl/multi.h \
+ C:/devkitPro/portlibs/3ds/include/curl/curl.h \
+ C:/devkitPro/portlibs/3ds/include/curl/urlapi.h \
+ C:/devkitPro/portlibs/3ds/include/curl/options.h \
+ C:/devkitPro/portlibs/3ds/include/curl/header.h \
+ C:/devkitPro/portlibs/3ds/include/curl/websockets.h \
+ C:/devkitPro/portlibs/3ds/include/curl/typecheck-gcc.h
 C:/devkitPro/libctru/include/3ds.h:
 C:/devkitPro/libctru/include/3ds/types.h:
 C:/devkitPro/libctru/include/3ds/result.h:
@@ -222,3 +233,14 @@ C:/devkitPro/libctru/include/c2d/spritesheet.h:
 C:/devkitPro/libctru/include/c2d/sprite.h:
 C:/devkitPro/libctru/include/c2d/text.h:
 C:/devkitPro/libctru/include/c2d/font.h:
+C:/devkitPro/portlibs/3ds/include/curl/curl.h:
+C:/devkitPro/portlibs/3ds/include/curl/curlver.h:
+C:/devkitPro/portlibs/3ds/include/curl/system.h:
+C:/devkitPro/portlibs/3ds/include/curl/easy.h:
+C:/devkitPro/portlibs/3ds/include/curl/multi.h:
+C:/devkitPro/portlibs/3ds/include/curl/curl.h:
+C:/devkitPro/portlibs/3ds/include/curl/urlapi.h:
+C:/devkitPro/portlibs/3ds/include/curl/options.h:
+C:/devkitPro/portlibs/3ds/include/curl/header.h:
+C:/devkitPro/portlibs/3ds/include/curl/websockets.h:
+C:/devkitPro/portlibs/3ds/include/curl/typecheck-gcc.h:
