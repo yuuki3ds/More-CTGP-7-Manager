@@ -39,9 +39,9 @@ INCLUDES	:=	include
 GRAPHICS	:=	gfx
 GFXBUILD	:=	$(BUILD)
 ROMFS		:=	romfs
-#GFXBUILD	:=	$(ROMFS)/gfx
-APP_TITLE	:=	Character Switcher
-APP_DESCRIPTION :=	More！CTGP-7のCharactersフォルダを切り替えます
+GFXBUILD	:=	$(ROMFS)/gfx
+APP_TITLE	:=	More！CTGP-7 Manager
+APP_DESCRIPTION :=	Charactersフォルダを切り替えます
 APP_AUTHOR	:=	yk/3DSProject Team
 
 #---------------------------------------------------------------------------------
