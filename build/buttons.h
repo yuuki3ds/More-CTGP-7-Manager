@@ -3,3 +3,4 @@
 
 #define buttons_tinyButtonBackground_idx 0
 #define buttons_selTinyButtonBackground_idx 1
+#define buttons_selFrame_idx 2
