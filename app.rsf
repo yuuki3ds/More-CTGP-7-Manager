@@ -226,6 +226,7 @@ AccessControlInfo:
    - y2r:u
    - ldr:ro
    - nim:aoc
+   - mcu::HWC        # battery percentage
 
 SystemControlInfo:
   SaveDataSize            : 0KB

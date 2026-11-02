@@ -1,4 +1,4 @@
-// More！CTGP-7 Manager Ver.1.2.0 - character folder manager for More!CTGP-7
+// More！CTGP-7 Manager Ver.1.2.1 - character folder manager for More!CTGP-7
 // Target: sdmc:/CTGP-7/MyStuff/Characters{1,2,3}
 // The folder named "Characters" (no number) is the active one.
 // No state file for folders: the active slot is detected from which folders exist.
@@ -21,8 +21,9 @@
 #endif
 #include <curl/curl.h>
 #include <sys/stat.h>
+#include <time.h>
 
-#define APP_VERSION "Ver.1.2.0"
+#define APP_VERSION "Ver.1.2.1"
 #define APP_NAME_1  "More！CTGP-7"
 #define APP_NAME_2  "Manager"          // used only if the logo image fails to load
 #define APP_AUTHOR  "yk"
@@ -126,6 +127,14 @@ typedef struct {
     const char *ex_fail;
     const char *ver_unknown;
     const char *regions_label;
+    const char *set_clock;
+    const char *h24;
+    const char *h12;
+    const char *am;
+    const char *pm;
+    const char *notice_wifi;
+    const char *notice_batt;
+    const char *notice_batt_crit;
 } Strings;
 
 static const Strings STR_EN = {
@@ -198,6 +207,14 @@ static const Strings STR_EN = {
     "Download failed.",
     "Ver: ---",
     "Supported regions",
+    "Clock format",
+    "24-hour",
+    "12-hour",
+    "AM",
+    "PM",
+    "Wi-Fi is not connected.",
+    "The battery is running low.",
+    "The battery is low.\nPlease connect the charger.",
 };
 
 static const Strings STR_JA = {
@@ -270,6 +287,14 @@ static const Strings STR_JA = {
     "ダウンロードに失敗しました。",
     "Ver: ---",
     "対応リージョン",
+    "時刻表示",
+    "24時間",
+    "12時間",
+    "午前",
+    "午後",
+    "WiFiが接続されていません。",
+    "バッテリーが少なくなっています。",
+    "バッテリーが減っています。\n充電器を接続してください。",
 };
 
 // ------------------------------------------------------------ config
@@ -283,6 +308,7 @@ typedef struct {
     int dark;                     // dark mode (0/1)
     int sfx;                      // sound effects (0/1)
     int bgm;                      // background music (0/1)
+    int clock24;                  // 1 = 24-hour clock, 0 = 12-hour
 } Config;
 
 static void config_defaults(Config *c) {
@@ -293,6 +319,7 @@ static void config_defaults(Config *c) {
     c->dark = 0;
     c->sfx = 1;
     c->bgm = 1;
+    c->clock24 = 1;
     snprintf(c->pack_url, sizeof c->pack_url, "%s", PACK_URL_DEFAULT);
 }
 
@@ -324,6 +351,7 @@ static void config_load(Config *c) {
         else if (!strcmp(key, "dark")) c->dark = v ? 1 : 0;
         else if (!strcmp(key, "sfx")) c->sfx = v ? 1 : 0;
         else if (!strcmp(key, "bgm")) c->bgm = v ? 1 : 0;
+        else if (!strcmp(key, "clock24")) c->clock24 = v ? 1 : 0;
     }
     fclose(f);
 }
@@ -333,8 +361,8 @@ static void config_save(const Config *c) {
     mkdir(CFG_DIR, 0777);
     FILE *f = fopen(CFG_PATH, "w");
     if (!f) return;
-    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\ncheck_update=%d\ndark=%d\nsfx=%d\nbgm=%d\n",
-            c->lang, c->confirm, c->exit_after, c->check_update, c->dark, c->sfx, c->bgm);
+    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\ncheck_update=%d\ndark=%d\nsfx=%d\nbgm=%d\nclock24=%d\n",
+            c->lang, c->confirm, c->exit_after, c->check_update, c->dark, c->sfx, c->bgm, c->clock24);
     if (strcmp(c->pack_url, PACK_URL_DEFAULT) != 0)     // only persist a custom URL
         fprintf(f, "pack_url=%s\n", c->pack_url);
     fclose(f);
@@ -868,7 +896,8 @@ static void ex_fetch_versions(void) {
 // WAV files in romfs:/sound/. Needs sdmc:/3ds/dspfirm.cdc; without it the app runs silently.
 
 // SE_BGM is the background music; it uses the same loader on its own DSP channel.
-enum { SE_OK = 0, SE_CANCEL, SE_DECIDE, SE_CURSOR, SE_DLG_OPEN, SE_DLG_CLOSE, SE_SLOT, SE_BGM, SE_COUNT };
+enum { SE_OK = 0, SE_CANCEL, SE_DECIDE, SE_CURSOR, SE_DLG_OPEN, SE_DLG_CLOSE, SE_SLOT,
+       SE_ATTENTION, SE_FOUND, SE_BUSY, SE_BGM, SE_COUNT };
 
 #define BGM_GAP_MS 3000   // silence between BGM loops
 
@@ -880,6 +909,9 @@ static const char *SE_FILES[SE_COUNT] = {
     "romfs:/sound/SE_SYS_DIALOG_OPEN.wav",
     "romfs:/sound/SE_SYS_DIALOG_CLOSE.wav",
     "romfs:/sound/SE_SYS_SLOT_FRAME.wav",
+    "romfs:/sound/SE_SYS_ATTENTION_POPUP.wav",     // Wi-Fi / battery notices
+    "romfs:/sound/SE_SYS_WIFI_CONNECT_OK.wav",     // update found
+    "romfs:/sound/SE_SYS_BUSY_SYMBOL.wav",         // while checking / updating (every 1 s)
     "romfs:/sound/SE_SYS_WIFI_MII_CUPSULE_MII_MOVE.wav",
 };
 
@@ -973,6 +1005,16 @@ static void sfx_play(int id) {
     ndspChnWaveBufClear(id);                        // restart if still playing
     g_se[id].wb.status = NDSP_WBUF_DONE;
     ndspChnWaveBufAdd(id, &g_se[id].wb);
+}
+
+static bool sfx_playing(int id) {
+    return g_ndsp && id >= 0 && id < SE_COUNT && g_se[id].ok && ndspChnIsPlaying(id);
+}
+
+static void sfx_stop(int id) {
+    if (!g_ndsp || id < 0 || id >= SE_COUNT || !g_se[id].ok) return;
+    ndspChnWaveBufClear(id);
+    g_se[id].wb.status = NDSP_WBUF_DONE;
 }
 
 static bool sfx_busy(void) {
@@ -1159,6 +1201,9 @@ static C2D_SpriteSheet g_top_bg = NULL;   // InfoBackground
 static C2D_SpriteSheet g_bot_bg = NULL;   // Upd
 static C2D_SpriteSheet g_btns   = NULL;   // 0: tinyButtonBackground, 1: selTinyButtonBackground, 2: selFrame (mask of its yellow frame)
 static C2D_SpriteSheet g_logo   = NULL;   // 0: top-screen logo (220x103), 1: about logo (180x84)
+static C2D_SpriteSheet g_kart   = NULL;   // kart silhouette that drives across the top screen
+static C2D_SpriteSheet g_shell  = NULL;   // shell that shoots across the top screen
+static C2D_SpriteSheet g_bowser = NULL;   // Bowser kart silhouette
 static C2D_SpriteSheet g_ghicon = NULL;   // optional: GitHub mark (gfx/github.png), tinted to text color
 
 // Draws logo `idx` centered at cx with its top at y. Returns the drawn height (0 if missing).
@@ -1197,6 +1242,8 @@ static void set_bg_dark(bool dark) {
     if (dark == g_bg_inverted) return;
     invert_sheet(g_top_bg);
     invert_sheet(g_bot_bg);
+    invert_sheet(g_kart);          // black kart on light bg / white kart on dark bg
+    invert_sheet(g_bowser);
     g_bg_inverted = dark;
 }
 
@@ -1208,6 +1255,300 @@ static void draw_bg(C2D_SpriteSheet sheet, float sw, float sh) {
 
 // Redraws only the rows y0..y1 of a full-screen background (used to clip the
 // scrolling settings list). Returns false if not possible (caller falls back).
+// ---- animated goal-tape (checker) strip at the bottom of both backgrounds ----
+// Image rows of the checker band, frame width and pattern period (in image pixels).
+// Adjust these if the background images are replaced.
+#define TOP_TAPE_Y0 157
+#define TOP_TAPE_Y1 196
+#define BOT_TAPE_Y0 122
+#define BOT_TAPE_Y1 161
+#define TAPE_BORDER 3
+#define TAPE_PERIOD 64.0f
+#define TAPE_SPEED  14.0f          // image pixels per second (moves left)
+
+// draws image area [ix0,ix1) x [iy0,iy1) (image px) at screen dx,dy with scale sx,sy
+static void draw_img_part(C2D_Image im, float ix0, float ix1, float iy0, float iy1,
+                          float dx, float dy, float sx, float sy) {
+    const Tex3DS_SubTexture *o = im.subtex;
+    if (ix1 - ix0 < 0.5f || iy1 - iy0 < 0.5f) return;
+    float W = o->width, H = o->height;
+    Tex3DS_SubTexture st = *o;
+    st.left   = o->left + ix0 / W * (o->right - o->left);
+    st.right  = o->left + ix1 / W * (o->right - o->left);
+    st.top    = o->top + iy0 / H * (o->bottom - o->top);
+    st.bottom = o->top + iy1 / H * (o->bottom - o->top);
+    st.width  = (u16)((ix1 - ix0) + 0.5f); if (!st.width) st.width = 1;
+    st.height = (u16)((iy1 - iy0) + 0.5f); if (!st.height) st.height = 1;
+    C2D_Image part = { im.tex, &st };
+    C2D_DrawImageAt(part, dx, dy, 0.5f, NULL, (ix1 - ix0) * sx / st.width, (iy1 - iy0) * sy / st.height);
+}
+
+// Scrolls the checker band horizontally (seamless, uses the pattern period).
+// Only the part inside screen rows [cy0, cy1) is drawn.
+static void draw_tape(C2D_SpriteSheet sheet, float sw, float sh, int ty0, int ty1, float cy0, float cy1) {
+    if (!sheet) return;
+    C2D_Image im = C2D_SpriteSheetGetImage(sheet, 0);
+    const Tex3DS_SubTexture *o = im.subtex;
+    if (o->top < o->bottom) return;                       // rotated: not handled
+    float W = o->width, H = o->height, sx = sw / W, sy = sh / H;
+    float y0 = ty0, y1 = ty1;                              // clip in image rows
+    if (y0 < cy0 / sy) y0 = cy0 / sy;
+    if (y1 > cy1 / sy) y1 = cy1 / sy;
+    if (y1 <= y0) return;
+    float b = TAPE_BORDER;
+    float off = fmodf((float)(osGetTime() % 1000000) * TAPE_SPEED / 1000.0f, TAPE_PERIOD);
+    // piece 1: [b+off, W-b) -> starts at b ; piece 2: one period back fills the right end
+    draw_img_part(im, b + off, W - b, y0, y1, b * sx, y0 * sy, sx, sy);
+    draw_img_part(im, W - b - TAPE_PERIOD, W - b - TAPE_PERIOD + off, y0, y1, (W - b - off) * sx, y0 * sy, sx, sy);
+}
+
+// ---- racers (Mario, Bowser) & shells across the top screen ----
+// One phase lasts 30 s .. 2 min 30 s (random). Each phase shows Mario once, Bowser once and
+// three shells, at random moments and without overlapping, using one of these scenes:
+//   normal       : everybody passes on their own
+//   shell hit    : a shell comes from behind and hits Mario (he spins)
+//   side by side : Bowser runs next to Mario and overtakes him
+//   bowser fire  : Bowser catches up with Mario, fires a shell at him and overtakes
+#define CYCLE_MIN_MS 30000          // 30 s
+#define CYCLE_MAX_MS 150000         // 2 min 30 s
+#define KART_SPEED   30.0f          // Mario: screen px per second (tape moves ~19 px/s on top)
+#define BOWSER_SPEED (KART_SPEED * 2.0f)
+#define KART_GROUND  236.0f         // y of the wheels' bottom (Mario, shells)
+#define BOWSER_LANE  (-4.0f)        // Bowser runs on a lane slightly further back
+#define KART_SCALE   0.8f           // Mario drawn size (1.0 = 77x49)
+#define BOWSER_SCALE 0.7f           // Bowser drawn size (1.0 = 57x68)
+#define SHELL_SPEED  280.0f         // very fast
+#define SPIN_MS      1100           // spin-out duration
+#define SHELLS       3
+// scene chances in % (the rest = normal). Hits (shell hit + bowser fire) ~ 1 phase in 3.
+#define P_SHELL_HIT  18
+#define P_SIDE       22
+#define P_FIRE       15
+
+static u32 rand_range(u32 lo, u32 hi) {                   // inclusive
+    return lo + (u32)(((u64)rand() * (hi - lo + 1)) / ((u64)RAND_MAX + 1));
+}
+static float frand(float lo, float hi) { return lo + (hi - lo) * ((float)rand() / (float)RAND_MAX); }
+
+typedef struct {
+    C2D_SpriteSheet *sheet;
+    float scale, speed, lane;
+    bool  run, done;
+    float x;
+    u64   at;                     // planned start
+    u64   spin_start;             // 0 = not spinning
+    u64   rattle_end, rattle_next, rattle_step;
+    bool  rattle_double;
+    float rattle_amp, dy, rot;
+} Racer;
+
+enum { R_MARIO = 0, R_BOWSER = 1 };
+static Racer g_r[2] = {
+    { &g_kart,   KART_SCALE,   KART_SPEED,   0,           false, true, 0, 0, 0, 0, 0, 0, false, 1, 0, 0 },
+    { &g_bowser, BOWSER_SCALE, BOWSER_SPEED, BOWSER_LANE, false, true, 0, 0, 0, 0, 0, 0, false, 1, 0, 0 },
+};
+
+static bool  g_shell_run[SHELLS], g_shell_done[SHELLS] = {true, true, true};
+static float g_shell_x[SHELLS];
+static u64   g_shell_at[SHELLS];
+static int   g_fire_slot = -1;        // shell slot fired by Bowser (-1 = none)
+static float g_fire_dist = 70;        // fire when Bowser is this close behind Mario
+static u64   g_cycle_end = 0, g_last = 0;
+
+static float racer_w(const Racer *r) {
+    return *r->sheet ? C2D_SpriteSheetGetImage(*r->sheet, 0).subtex->width * r->scale : 60;
+}
+static float shell_w(void) { return g_shell ? C2D_SpriteSheetGetImage(g_shell, 0).subtex->width : 26; }
+static u32 cross_ms(float w, float speed) { return (u32)((404 + w + 8) / speed * 1000); }
+
+typedef struct { u32 dur; int kind; } Block;   // kind: 0 Mario(+scene), 1 Bowser, 2 shell
+
+static void plan_cycle(u64 now) {
+    u32 L = rand_range(CYCLE_MIN_MS, CYCLE_MAX_MS);
+    g_cycle_end = now + L;
+    float wm = racer_w(&g_r[R_MARIO]), wb = racer_w(&g_r[R_BOWSER]), ws = shell_w();
+    u32 md = cross_ms(wm, KART_SPEED) + SPIN_MS;
+    u32 bd = cross_ms(wb, BOWSER_SPEED);
+    u32 sd = cross_ms(ws, SHELL_SPEED);
+
+    int p = rand_range(0, 99);
+    int scene = p < P_SHELL_HIT ? 1 : p < P_SHELL_HIT + P_SIDE ? 2 : p < P_SHELL_HIT + P_SIDE + P_FIRE ? 3 : 0;
+
+    // offsets inside Mario's block
+    u32 bowser_off = 0, hit_off = 0;
+    u32 mblock = md;
+    if (scene == 1) {                                      // hit shell launched when Mario is at x = 140..320
+        hit_off = (u32)((404 - frand(140, 320)) / KART_SPEED * 1000);
+    } else if (scene == 2) {                               // Bowser enters when Mario is at x = 290..350
+        bowser_off = (u32)((404 - frand(290, 350)) / KART_SPEED * 1000);
+    } else if (scene == 3) {                               // Bowser enters when Mario is at x = 200..250
+        bowser_off = (u32)((404 - frand(200, 250)) / KART_SPEED * 1000);
+        g_fire_dist = frand(50, 80);
+    }
+    if (scene == 2 || scene == 3) { u32 e = bowser_off + bd; if (e > mblock) mblock = e; }
+
+    // blocks to place: Mario-block, Bowser (if separate), free shells
+    Block bl[6]; int n = 0;
+    bl[n++] = (Block){ mblock, 0 };
+    if (scene == 0 || scene == 1) bl[n++] = (Block){ bd, 1 };
+    int free_shells = SHELLS - ((scene == 1 || scene == 3) ? 1 : 0);
+    for (int i = 0; i < free_shells; i++) bl[n++] = (Block){ sd, 2 };
+    for (int i = n - 1; i > 0; i--) { int j = rand_range(0, i); Block t = bl[i]; bl[i] = bl[j]; bl[j] = t; }
+
+    // spread the free time randomly between the blocks (300 ms minimum gap)
+    u32 total = 0;
+    for (int i = 0; i < n; i++) total += bl[i].dur + 300;
+    u32 slack = L > total ? L - total : 0;
+    float wts[7], wsum = 0;
+    for (int i = 0; i <= n; i++) { wts[i] = frand(0.05f, 1.0f); wsum += wts[i]; }
+
+    for (int s = 0; s < SHELLS; s++) { g_shell_done[s] = true; g_shell_run[s] = false; }
+    g_fire_slot = -1;
+    int next_shell = 0;
+    if (scene == 1 || scene == 3) next_shell = 1;           // slot 0 reserved for the scene
+    u64 t = now;
+    for (int i = 0; i < n; i++) {
+        t += (u64)(slack * (wts[i] / wsum));
+        if (bl[i].kind == 0) {
+            g_r[R_MARIO].at = t; g_r[R_MARIO].done = false;
+            if (scene == 1) { g_shell_at[0] = t + hit_off; g_shell_done[0] = false; }
+            if (scene == 2 || scene == 3) { g_r[R_BOWSER].at = t + bowser_off; g_r[R_BOWSER].done = false; }
+            if (scene == 3) { g_fire_slot = 0; g_shell_at[0] = UINT64_MAX; g_shell_done[0] = false; }
+        } else if (bl[i].kind == 1) {
+            g_r[R_BOWSER].at = t; g_r[R_BOWSER].done = false;
+        } else if (next_shell < SHELLS) {
+            g_shell_at[next_shell] = t; g_shell_done[next_shell] = false; next_shell++;
+        }
+        t += bl[i].dur + 300;
+    }
+}
+
+static void rattle_begin(Racer *r, u64 now) {
+    r->rattle_end = now + rand_range(300, 650);
+    r->rattle_amp = frand(1.0f, 1.8f);
+    r->rattle_step = now;
+    r->rattle_double = rand_range(0, 99) < 30;          // 30%: two rattles back to back
+}
+
+static void racer_update(Racer *r, u64 now, float dt) {
+    if (!r->done && !r->run && now >= r->at) {
+        r->run = true; r->done = true; r->x = 404; r->spin_start = 0;
+        r->rattle_next = now + rand_range(1000, 3500);
+        r->rattle_end = 0; r->dy = 0; r->rot = 0;
+    }
+    if (!r->run) return;
+    float sp = r->speed;
+    if (r->spin_start) {
+        if (now - r->spin_start >= SPIN_MS) r->spin_start = 0;
+        else sp *= 0.25f;                                  // nearly stops while spinning
+    }
+    r->x -= sp * dt;
+    if (!r->spin_start) {
+        if (now < r->rattle_end) {                         // rattling: random jolts
+            if (now >= r->rattle_step) {
+                r->dy  = -frand(0.4f, 1.8f) * r->rattle_amp + frand(-0.4f, 0.4f);
+                r->rot = frand(-0.025f, 0.025f) * r->rattle_amp;
+                r->rattle_step = now + rand_range(30, 75);
+            }
+        } else if (r->rattle_end) {                        // a rattle just ended
+            r->dy = 0; r->rot = 0;
+            if (r->rattle_double) {                       // second one with (almost) no pause
+                r->rattle_double = false;
+                u64 st = now + rand_range(0, 60);
+                r->rattle_end = st + rand_range(300, 650);
+                r->rattle_amp = frand(1.0f, 1.8f);
+                r->rattle_step = st;
+            } else {
+                r->rattle_end = 0;
+                r->rattle_next = now + rand_range(1500, 5000);
+            }
+        } else if (now >= r->rattle_next) {
+            rattle_begin(r, now);
+        }
+    }
+    if (r->x < -racer_w(r) - 4) r->run = false;
+}
+
+static void kart_update(void) {
+    u64 now = osGetTime();
+    if (!g_cycle_end) { srand((unsigned)now); plan_cycle(now); g_last = now; return; }
+    float dt = (now - g_last) / 1000.0f;
+    g_last = now;
+    if (dt > 0.1f) dt = 0.1f;                              // after a pause (HOME menu etc.)
+
+    bool busy = g_r[0].run || g_r[1].run || !g_r[0].done || !g_r[1].done;
+    for (int i = 0; i < SHELLS; i++) busy = busy || g_shell_run[i] || !g_shell_done[i];
+    if (now >= g_cycle_end && !busy) plan_cycle(now);
+
+    Racer *m = &g_r[R_MARIO], *bw = &g_r[R_BOWSER];
+    racer_update(m, now, dt);
+    racer_update(bw, now, dt);
+
+    // Bowser fires at Mario when close behind him
+    if (g_fire_slot >= 0) {
+        int s = g_fire_slot;
+        if (bw->run && m->run && !m->spin_start && bw->x - (m->x + racer_w(m)) <= g_fire_dist) {
+            g_shell_run[s] = true; g_shell_done[s] = true;
+            g_shell_x[s] = bw->x - shell_w() + 6;              // from Bowser's front
+            g_fire_slot = -1;
+        } else if ((bw->done && !bw->run) || (m->done && !m->run)) {
+            g_shell_done[s] = true; g_fire_slot = -1;      // missed the chance: cancel
+        }
+    }
+
+    // shells: start, move, hit test against Mario
+    for (int i = 0; i < SHELLS; i++) {
+        if (!g_shell_done[i] && !g_shell_run[i] && now >= g_shell_at[i]) {
+            g_shell_run[i] = true; g_shell_done[i] = true; g_shell_x[i] = 404;
+        }
+        if (!g_shell_run[i]) continue;
+        g_shell_x[i] -= SHELL_SPEED * dt;
+        if (m->run && !m->spin_start) {
+            float kx0 = m->x + 4, kx1 = m->x + racer_w(m) - 4;
+            float sx0 = g_shell_x[i], sx1 = g_shell_x[i] + shell_w();
+            if (sx0 < kx1 && sx1 > kx0) {                  // hit: Mario spins, shell breaks
+                m->spin_start = now;
+                m->rattle_end = 0; m->dy = 0; m->rot = 0;
+                g_shell_run[i] = false;
+                continue;
+            }
+        }
+        if (g_shell_x[i] < -shell_w() - 4) g_shell_run[i] = false;
+    }
+}
+
+static void draw_racer(const Racer *r, u64 now) {
+    if (!r->run || !*r->sheet) return;
+    C2D_Image im = C2D_SpriteSheetGetImage(*r->sheet, 0);
+    float w = im.subtex->width * r->scale, h = im.subtex->height * r->scale;
+    float dy = 0, rot = 0;
+    if (r->spin_start) {                                   // spin-out: 2 turns, easing out + small hop
+        float t = (now - r->spin_start) / (float)SPIN_MS;
+        if (t > 1) t = 1;
+        float e = 1 - (1 - t) * (1 - t);
+        rot = e * 2.0f * 2.0f * (float)M_PI;
+        dy = -sinf(t * (float)M_PI) * 7.0f;
+    } else if (now < r->rattle_end && now >= r->rattle_step - 80) {
+        dy = r->dy; rot = r->rot;
+    }
+    C2D_DrawImageAtRotated(im, r->x + w / 2, KART_GROUND + r->lane - h / 2 + dy, 0.5f, rot, NULL, r->scale, r->scale);
+}
+
+static void draw_kart(void) {
+    u64 now = osGetTime();
+    draw_racer(&g_r[R_BOWSER], now);                       // back lane first
+    draw_racer(&g_r[R_MARIO], now);
+    if (g_shell) {
+        C2D_Image im = C2D_SpriteSheetGetImage(g_shell, 0);
+        float h = im.subtex->height;
+        for (int i = 0; i < SHELLS; i++) {
+            if (!g_shell_run[i]) continue;
+            // straight through: no spin, no shake
+            C2D_DrawImageAt(im, g_shell_x[i], KART_GROUND - h, 0.5f, NULL, 1.0f, 1.0f);
+        }
+    }
+}
+
 static bool draw_bg_strip(C2D_SpriteSheet sheet, float sw, float sh, float y0, float y1) {
     if (!sheet || y1 <= y0) return false;
     C2D_Image im = C2D_SpriteSheetGetImage(sheet, 0);
@@ -1525,6 +1866,138 @@ static void draw_tooltip(float cx, float y, const char *txt) {
     g_shadow = saved;
 }
 
+// ---- status bar (top screen): clock, Wi-Fi, battery ----
+static bool g_ac = false, g_ptm = false, g_mcu = false;
+static int  g_wifi_bars = 0;        // 0..3
+static bool g_wifi_on = false;
+static int  g_batt = -1;            // percent, -1 = unknown
+static bool g_batt_exact = false;   // false: estimated from 0..5 level
+static bool g_charging = false;
+
+static void status_init(void) {
+    g_ac  = R_SUCCEEDED(acInit());
+    g_ptm = R_SUCCEEDED(ptmuInit());
+    g_mcu = R_SUCCEEDED(mcuHwcInit());
+}
+static void status_exit(void) {
+    if (g_mcu) mcuHwcExit();
+    if (g_ptm) ptmuExit();
+    if (g_ac)  acExit();
+}
+static void status_poll(void) {
+    u32 ws = 0;
+    g_wifi_on = g_ac && R_SUCCEEDED(ACU_GetWifiStatus(&ws)) && ws != 0;
+    g_wifi_bars = g_wifi_on ? osGetWifiStrength() : 0;
+    if (g_wifi_bars > 3) g_wifi_bars = 3;
+
+    u8 v = 0;
+    g_batt_exact = false;
+    if (g_mcu && R_SUCCEEDED(MCUHWC_GetBatteryLevel(&v))) { g_batt = v > 100 ? 100 : v; g_batt_exact = true; }
+    else if (g_ptm && R_SUCCEEDED(PTMU_GetBatteryLevel(&v))) g_batt = v * 20;   // 0..5 -> %
+    u8 ch = 0;
+    g_charging = g_ptm && R_SUCCEEDED(PTMU_GetBatteryChargeState(&ch)) && ch;
+}
+
+// ring segment of a fan (angles in radians, screen coords: up = -pi/2)
+static void draw_fan(float cx, float cy, float ri, float ro, u32 c) {
+    const float a0 = -3.0f * (float)M_PI / 4.0f, a1 = -(float)M_PI / 4.0f;
+    const int N = 8;
+    for (int i = 0; i < N; i++) {
+        float t0 = a0 + (a1 - a0) * i / N, t1 = a0 + (a1 - a0) * (i + 1) / N;
+        float x0i = cx + cosf(t0) * ri, y0i = cy + sinf(t0) * ri, x1i = cx + cosf(t1) * ri, y1i = cy + sinf(t1) * ri;
+        float x0o = cx + cosf(t0) * ro, y0o = cy + sinf(t0) * ro, x1o = cx + cosf(t1) * ro, y1o = cy + sinf(t1) * ro;
+        if (ri <= 0.01f) { C2D_DrawTriangle(cx, cy, c, x0o, y0o, c, x1o, y1o, c, 0.5f); continue; }
+        C2D_DrawTriangle(x0i, y0i, c, x0o, y0o, c, x1o, y1o, c, 0.5f);
+        C2D_DrawTriangle(x0i, y0i, c, x1o, y1o, c, x1i, y1i, c, 0.5f);
+    }
+}
+
+static void draw_wifi(float cx, float cy) {           // cx,cy = bottom point of the fan
+    static const float RI[4] = { 0, 5.5f, 10.0f, 14.5f }, RO[4] = { 3.5f, 8.0f, 12.5f, 17.0f };
+    u32 off = (COL_GRAY & 0x00FFFFFF) | 0x50000000;
+    for (int pass = 0; pass < 2; pass++) {             // pass 0: shadow
+        for (int k = 0; k < 4; k++) {
+            bool lit = g_wifi_on && (k == 0 || k <= g_wifi_bars);
+            u32 c = pass == 0 ? (lit ? g_shadow : 0) : (lit ? COL_WHITE : off);
+            if (!c) continue;
+            draw_fan(cx + (pass == 0 ? 1 : 0), cy + (pass == 0 ? 1 : 0), RI[k], RO[k], c);
+        }
+    }
+}
+
+// battery icon (w x h) at x,y
+static void draw_battery(float x, float y) {
+    const float w = 22, h = 11;
+    u32 edge = COL_WHITE;
+    if (g_shadow) {
+        C2D_DrawRectSolid(x + 1, y + 1, 0.5f, w, h, g_shadow);
+        C2D_DrawRectSolid(x + w + 1, y + 4, 0.5f, 2, h - 6, g_shadow);
+    }
+    C2D_DrawRectSolid(x, y, 0.5f, w, h, edge);                         // outline
+    C2D_DrawRectSolid(x + 1.5f, y + 1.5f, 0.5f, w - 3, h - 3, C2D_Color32(0x18, 0x18, 0x20, 0xFF));
+    C2D_DrawRectSolid(x + w, y + 3.5f, 0.5f, 2, h - 7, edge);           // nub
+    int p = g_batt < 0 ? 0 : g_batt;
+    u32 fill = p < 20 ? C2D_Color32(0xF0, 0x40, 0x30, 0xFF) : C2D_Color32(0x40, 0xD0, 0x50, 0xFF);
+    if (g_charging) fill = C2D_Color32(0x40, 0xD0, 0x50, 0xFF);
+    C2D_DrawRectSolid(x + 2.5f, y + 2.5f, 0.5f, (w - 5) * p / 100.0f, h - 5, fill);
+    if (g_charging) {                                                   // lightning bolt
+        u32 b = C2D_Color32(0xFF, 0xE8, 0x30, 0xFF);
+        float cx = x + w / 2, cy = y + h / 2;
+        C2D_DrawTriangle(cx + 1, cy - 5, b, cx - 4, cy + 1, b, cx + 0.5f, cy + 0.5f, b, 0.5f);
+        C2D_DrawTriangle(cx - 1, cy + 5, b, cx + 4, cy - 1, b, cx - 0.5f, cy - 0.5f, b, 0.5f);
+    }
+}
+
+static void draw_status_bar(const Strings *S, bool clock24) {
+    // clock (left) - the ":" blinks with the seconds (on for the first half of each second)
+    time_t now = time(NULL);
+    struct tm *tm = gmtime(&now);                 // 3DS RTC already holds local time
+    static int last_sec = -1;
+    static u64 sec_start = 0;
+    if (tm && tm->tm_sec != last_sec) { last_sec = tm->tm_sec; sec_start = osGetTime(); }
+    bool colon_on = (osGetTime() - sec_start) < 500;
+
+    char pre[24] = "--", post[24] = "--";         // text before / after the ":"
+    if (tm) {
+        if (clock24) {
+            snprintf(pre, sizeof pre, "%02d", tm->tm_hour);
+            snprintf(post, sizeof post, "%02d", tm->tm_min);
+        } else {
+            int h = tm->tm_hour % 12;
+            if (h == 0) h = 12;
+            const char *ap = tm->tm_hour < 12 ? S->am : S->pm;
+            if (S == &STR_JA) {
+                snprintf(pre, sizeof pre, "%s %d", ap, h);
+                snprintf(post, sizeof post, "%02d", tm->tm_min);
+            } else {
+                snprintf(pre, sizeof pre, "%d", h);
+                snprintf(post, sizeof post, "%02d %s", tm->tm_min, ap);
+            }
+        }
+    }
+    draw_wifi(20, 21);                            // Wi-Fi fan, left of the clock
+    float cw, chh, pw, ph;
+    text_size(pre, 0.55f, &pw, &ph);
+    text_size(":", 0.55f, &cw, &chh);
+    float x = 38;
+    draw_text(pre, x, 4, 0.55f, COL_WHITE);
+    x += pw;
+    if (colon_on) draw_text(":", x, 4, 0.55f, COL_WHITE);
+    x += cw;
+    draw_text(post, x, 4, 0.55f, COL_WHITE);
+
+    // battery % (right) <- battery icon
+    char pct[16];
+    if (g_batt < 0) snprintf(pct, sizeof pct, "--%%");
+    else snprintf(pct, sizeof pct, g_batt_exact ? "%d%%" : "~%d%%", g_batt);
+    float w, h;
+    text_size(pct, 0.5f, &w, &h);
+    float tx = 394 - w;
+    draw_text(pct, tx, 5, 0.5f, g_batt >= 0 && g_batt < 20 && !g_charging ? COL_RED : COL_WHITE);
+    float bx = tx - 6 - 24;
+    draw_battery(bx, 8);
+}
+
 static bool hit(Rect r, touchPosition t) {
     return t.px >= r.x && t.px < r.x + r.w && t.py >= r.y && t.py < r.y + r.h;
 }
@@ -1552,7 +2025,7 @@ static const Rect EX_NOTE_HIT[EX_ITEMS] = { {4, 56, 42, 42}, {4, 134, 42, 42} };
 static const Rect EX_DL_R[EX_ITEMS]   = { {200, 60, 106, 34}, {200, 138, 106, 34} };
 
 // Settings: a scrollable list (LIST_N rows) + a fixed Back button (index LIST_N)
-#define LIST_N       10
+#define LIST_N       11
 #define SET_N        (LIST_N + 1)
 #define LIST_Y       28
 #define LIST_H       170
@@ -1606,6 +2079,9 @@ int main(int argc, char **argv) {
     g_bot_bg = C2D_SpriteSheetLoad("romfs:/gfx/upd_bg.t3x");
     g_btns   = C2D_SpriteSheetLoad("romfs:/gfx/buttons.t3x");
     g_logo   = C2D_SpriteSheetLoad("romfs:/gfx/logo.t3x");
+    g_kart   = C2D_SpriteSheetLoad("romfs:/gfx/kart.t3x");
+    g_shell  = C2D_SpriteSheetLoad("romfs:/gfx/shell.t3x");
+    g_bowser = C2D_SpriteSheetLoad("romfs:/gfx/bowser.t3x");
     g_ghicon = C2D_SpriteSheetLoad("romfs:/gfx/github.t3x");   // NULL if not added
 
     bool sys_ja = false;
@@ -1626,6 +2102,15 @@ int main(int argc, char **argv) {
     set_bg_dark(cfg.dark);
     g_sfx_on = cfg.sfx;
     sfx_init();
+    status_init();
+    status_poll();
+    int notice = 0;                        // shown notice: 0 none, 1 Wi-Fi, 2 battery
+    int notice_queue = 0;                  // bit 1: Wi-Fi, bit 2: battery <20%, bit 4: battery <=5%
+    bool batt_warned = false, batt_crit_warned = false;
+    u64 next_poll = osGetTime() + 1000;
+    int frame_no = 0;
+    bool manual_check = false;             // "Check for updates" pressed (busy sound)
+    u64 next_busy = 0;
 
     char pack_ver[64];
     load_pack_version(pack_ver, sizeof pack_ver);
@@ -1687,12 +2172,33 @@ int main(int argc, char **argv) {
 
         const Strings *S = get_strings(&cfg, sys_ja);
 
+        // ---------- status polling / notices ----------
+        frame_no++;
+        if (osGetTime() >= next_poll) { status_poll(); next_poll = osGetTime() + 1000; }
+        if (frame_no == 45 && !g_wifi_on) notice_queue |= 1;          // ~0.75 s after start
+        if (g_batt >= 0 && g_batt <= 5 && !g_charging) {          // 5% or less: second warning
+            if (!batt_crit_warned) {
+                notice_queue |= 4;
+                notice_queue &= ~2;                                 // skip the 20% one if still waiting
+                batt_crit_warned = batt_warned = true;
+            }
+        } else if (g_batt >= 0 && g_batt < 20 && !g_charging) {
+            if (!batt_warned) { notice_queue |= 2; batt_warned = true; }
+        }
+        if (g_batt > 5)   batt_crit_warned = false;                 // re-arm after charging
+        if (g_batt >= 20) batt_warned = false;
+
         // state snapshot (used to pick the sound effect for this frame)
         Screen  pv_screen = screen;
         int     pv_cur = cursor, pv_set = set_cursor, pv_app = appupd_cursor, pv_ex = ex_cursor;
-        bool    pv_dlg = dialog, pv_upd = upd_dialog, pv_yes = dlg_yes;
+        bool    pv_yes = dlg_yes;
         bool    pv_appdlg = app_dialog, pv_appyes = app_yes;
+        (void)pv_appdlg;
         bool    pv_note = note_dialog >= 0;
+        // which window is on screen (input priority order)
+        #define VIS_NOW (note_dialog >= 0 ? 1 : notice ? 2 : upd_dialog ? 3 : app_dialog ? 4 : dialog ? 5 : 0)
+        int     pv_vis = VIS_NOW;
+        (void)pv_note;
         bool    ok_sfx = false;
         bool    ok_plain = false;   // force the normal OK sound
         int     force_se = -1;
@@ -1727,8 +2233,15 @@ int main(int argc, char **argv) {
         bool do_launch = false;
         bool do_appcheck = false;
 
+        if (!notice && notice_queue && note_dialog < 0 && !dialog) {
+            notice = (notice_queue & 1) ? 1 : (notice_queue & 2) ? 2 : 4;   // lowest bit first
+            notice_queue &= ~notice;
+        }
+
         if (note_dialog >= 0) {
             if ((down & (KEY_A | KEY_B)) || (tap && hit(DLG_OK, tp))) note_dialog = -1;
+        } else if (notice) {
+            if ((down & (KEY_A | KEY_B)) || (tap && hit(DLG_OK, tp))) notice = 0;
         } else if (upd_dialog) {
             if ((down & (KEY_A | KEY_B)) || (tap && hit(DLG_OK, tp))) upd_dialog = false;
         } else if (app_dialog) {
@@ -1908,30 +2421,31 @@ int main(int argc, char **argv) {
                     cfg.lang = (cfg.lang + 3 + dir) % 3;
                     changed = true;
                     break;
-                case 1: cfg.dark = !cfg.dark; changed = true; break;
-                case 2: cfg.sfx = !cfg.sfx; changed = true; break;
-                case 3: cfg.bgm = !cfg.bgm; changed = true; break;
-                case 4: cfg.confirm = !cfg.confirm; changed = true; break;
-                case 5: cfg.exit_after = !cfg.exit_after; changed = true; break;
-                case 6: cfg.check_update = !cfg.check_update; changed = true; break;
-                case 7:
+                case 1: cfg.clock24 = !cfg.clock24; changed = true; break;
+                case 2: cfg.dark = !cfg.dark; changed = true; break;
+                case 3: cfg.sfx = !cfg.sfx; changed = true; break;
+                case 4: cfg.bgm = !cfg.bgm; changed = true; break;
+                case 5: cfg.confirm = !cfg.confirm; changed = true; break;
+                case 6: cfg.exit_after = !cfg.exit_after; changed = true; break;
+                case 7: cfg.check_update = !cfg.check_update; changed = true; break;
+                case 8:
                     if (!lr) { screen = SCR_APPUPD; appupd_cursor = 0; }
                     break;
-                case 8:
+                case 9:
                     if (!lr) { config_defaults(&cfg); changed = true; }
                     break;
-                case 9:
+                case 10:
                     if (!lr) {
                         load_pack_version(pack_ver, sizeof pack_ver);
                         screen = SCR_ABOUT;
                     }
                     break;
-                case 10:
+                case 11:
                     if (!lr) screen = SCR_MAIN;
                     break;
                 }
                 if (act < LIST_N) ok_sfx = true;
-                if (act == 7 || act == 8 || act == 9) ok_plain = true;   // app update / reset / about
+                if (act == 8 || act == 9 || act == 10) ok_plain = true;   // app update / reset / about
                 if (changed) {
                     config_save(&cfg);
                     apply_theme(cfg.dark);
@@ -1959,7 +2473,8 @@ int main(int argc, char **argv) {
         }
 
         // ---------- manual app update check ----------
-        if (do_appcheck && !upd_busy()) check_start(&g_app, APP_URL_DEFAULT);
+        if (do_appcheck && !upd_busy()) { check_start(&g_app, APP_URL_DEFAULT); manual_check = true; }
+        if (manual_check && g_app.state != CHK_RUNNING) manual_check = false;
 
         // ---------- launch CTGP-7 ----------
         if (do_launch) {
@@ -1980,12 +2495,12 @@ int main(int argc, char **argv) {
             bool back = (pv_screen == SCR_SETTINGS && screen == SCR_MAIN) ||
                         (pv_screen == SCR_EXTRA && screen == SCR_MAIN) ||
                         ((pv_screen == SCR_ABOUT || pv_screen == SCR_APPUPD) && screen == SCR_SETTINGS);
+            int vis = VIS_NOW;
             if (se < 0) {
-                if ((!pv_note && note_dialog >= 0) || (!pv_dlg && dialog) || (!pv_upd && upd_dialog) ||
-                    (!pv_appdlg && app_dialog && !upd_dialog)) se = SE_DLG_OPEN;
-                else if ((pv_note && note_dialog < 0) ||
-                         (pv_dlg && !dialog) || (pv_upd && !upd_dialog) || (pv_appdlg && !app_dialog))
-                    se = (pv_appdlg && screen == SCR_APPUPD) ? SE_OK : SE_DLG_CLOSE;
+                if (vis != pv_vis && vis != 0)              // a window appeared
+                    se = vis == 2 ? SE_ATTENTION : (vis == 3 || vis == 4) ? SE_FOUND : SE_DLG_OPEN;
+                else if (vis == 0 && pv_vis != 0)           // the last window closed
+                    se = (pv_vis == 4 && screen == SCR_APPUPD) ? SE_OK : SE_DLG_CLOSE;
                 else if (back) se = SE_CANCEL;
                 else if (ok_plain) se = SE_OK;
                 else if (ok_sfx || screen != pv_screen)
@@ -1996,6 +2511,17 @@ int main(int argc, char **argv) {
                          app_yes != pv_appyes || ex_cursor != pv_ex) se = SE_CURSOR;
             }
             if (se >= 0) sfx_play(se);
+
+            // busy sound: loops back-to-back while checking manually / updating / downloading Extra files
+            bool busy_now = upd_busy() || ex_busy() || (manual_check && g_app.state == CHK_RUNNING);
+            u64 t = osGetTime();
+            if (busy_now) {
+                if (!sfx_playing(SE_BUSY)) sfx_play(SE_BUSY);           // restart as soon as it ends
+                next_busy = t;                                          // marks "was busy"
+            } else if (next_busy) {
+                sfx_stop(SE_BUSY);                                      // finished: stop at once
+                next_busy = 0;
+            }
         }
         bgm_update(cfg.bgm && !quit_pending);    // stop BGM while exiting / launching
 
@@ -2023,6 +2549,10 @@ int main(int argc, char **argv) {
         C2D_TargetClear(top, COL_BG);
         C2D_SceneBegin(top);
         draw_bg(g_top_bg, 400, 240);
+        draw_tape(g_top_bg, 400, 240, TOP_TAPE_Y0, TOP_TAPE_Y1, 0, 240);
+        kart_update();
+        draw_kart();
+        draw_status_bar(S, cfg.clock24);
         if (!draw_logo(0, 200, 4)) {
             draw_text_center(APP_NAME_1, 200, 20, 0.85f, COL_YELLOW);
             draw_text_center(APP_NAME_2, 200, 54, 0.85f, COL_YELLOW);
@@ -2051,6 +2581,7 @@ int main(int argc, char **argv) {
         C2D_TargetClear(bot, COL_BG);
         C2D_SceneBegin(bot);
         draw_bg(g_bot_bg, 320, 240);
+        draw_tape(g_bot_bg, 320, 240, BOT_TAPE_Y0, BOT_TAPE_Y1, 0, 240);
 
         if (screen == SCR_MAIN) {
             draw_text_center(S->select_slot, 160, 8, 0.7f, COL_YELLOW);
@@ -2197,16 +2728,16 @@ int main(int argc, char **argv) {
         } else {
             const char *langname = cfg.lang == 0 ? S->lang_auto : (cfg.lang == 1 ? "日本語" : "English");
             const char *labels[LIST_N] = {
-                S->set_language, S->set_dark, S->set_sfx, S->set_bgm, S->set_confirm, S->set_exit, S->set_check,
+                S->set_language, S->set_clock, S->set_dark, S->set_sfx, S->set_bgm, S->set_confirm, S->set_exit, S->set_check,
                 S->set_appupd, S->set_reset, S->about
             };
-            const char *values[LIST_N] = { langname, "", "", "", "", "", "", "", "", "" };
+            const char *values[LIST_N] = { langname, cfg.clock24 ? S->h24 : S->h12, "", "", "", "", "", "", "", "", "" };
             // ON/OFF items (shown as switches); NULL = not a switch
             int *toggles[LIST_N] = {
-                NULL, &cfg.dark, &cfg.sfx, &cfg.bgm, &cfg.confirm, &cfg.exit_after, &cfg.check_update,
+                NULL, NULL, &cfg.dark, &cfg.sfx, &cfg.bgm, &cfg.confirm, &cfg.exit_after, &cfg.check_update,
                 NULL, NULL, NULL
             };
-            static const bool centered[LIST_N] = { false, false, false, false, false, false, false, true, true, true };
+            static const bool centered[LIST_N] = { false, false, false, false, false, false, false, false, true, true, true };
             static float sw_anim[LIST_N];
             static bool sw_init = false;
             for (int i = 0; i < LIST_N; i++) {          // slide knobs toward their state
@@ -2234,6 +2765,7 @@ int main(int argc, char **argv) {
                 C2D_DrawRectSolid(0, 0, 0.5f, 320, LIST_Y, COL_BG);
             if (!draw_bg_strip(g_bot_bg, 320, 240, LIST_Y + LIST_H, 240))
                 C2D_DrawRectSolid(0, LIST_Y + LIST_H, 0.5f, 320, 240 - LIST_Y - LIST_H, COL_BG);
+            draw_tape(g_bot_bg, 320, 240, BOT_TAPE_Y0, BOT_TAPE_Y1, LIST_Y + LIST_H, 240);
 
             draw_text_center(S->settings_title, 160, 4, 0.7f, COL_YELLOW);
             draw_button(BACK_R, S->back, "", !dialog && set_cursor == LIST_N, false, true, true);
@@ -2278,6 +2810,26 @@ int main(int argc, char **argv) {
             draw_button(APP_NO, S->btn_later, "", !app_yes, false, true, true);
         }
 
+        if (notice) {
+            C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
+            C2D_DrawRectSolid(UPD_BOX.x - 2, UPD_BOX.y - 2, 0.5f, UPD_BOX.w + 4, UPD_BOX.h + 4,
+                              C2D_Color32(0xF0, 0x50, 0x40, 0xFF));
+            C2D_DrawRectSolid(UPD_BOX.x, UPD_BOX.y, 0.5f, UPD_BOX.w, UPD_BOX.h, COL_BG);
+            draw_text_center(notice == 4 ? "!!!" : "!", 160, UPD_BOX.y + 10, 0.9f, COL_RED);
+            if (notice == 4) {                                 // two lines, each centered
+                char l1[128];
+                const char *nl = strchr(S->notice_batt_crit, '\n');
+                size_t n = nl ? (size_t)(nl - S->notice_batt_crit) : strlen(S->notice_batt_crit);
+                if (n >= sizeof l1) n = sizeof l1 - 1;
+                memcpy(l1, S->notice_batt_crit, n); l1[n] = '\0';
+                draw_text_center(l1, 160, UPD_BOX.y + 44, 0.55f, COL_WHITE);
+                if (nl) draw_text_center(nl + 1, 160, UPD_BOX.y + 66, 0.55f, COL_WHITE);
+            }
+            else
+                draw_text_center(notice == 1 ? S->notice_wifi : S->notice_batt, 160, UPD_BOX.y + 56, 0.58f, COL_WHITE);
+            draw_button(DLG_OK, S->ok, "", true, false, true, true);
+        }
+
         if (note_dialog >= 0) {
             C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
             C2D_DrawRectSolid(UPD_BOX.x - 2, UPD_BOX.y - 2, 0.5f, UPD_BOX.w + 4, UPD_BOX.h + 4, sel_color());
@@ -2292,6 +2844,7 @@ int main(int argc, char **argv) {
     }
 
     sfx_exit();
+    status_exit();
     net_stop();
     if (g_romfs && g_chk.state != CHK_RUNNING && g_app.state != CHK_RUNNING) romfsExit();
 
@@ -2299,6 +2852,9 @@ int main(int argc, char **argv) {
     if (g_bot_bg) C2D_SpriteSheetFree(g_bot_bg);
     if (g_btns)   C2D_SpriteSheetFree(g_btns);
     if (g_logo)   C2D_SpriteSheetFree(g_logo);
+    if (g_kart)   C2D_SpriteSheetFree(g_kart);
+    if (g_shell)  C2D_SpriteSheetFree(g_shell);
+    if (g_bowser) C2D_SpriteSheetFree(g_bowser);
     if (g_ghicon) C2D_SpriteSheetFree(g_ghicon);
     C2D_TextBufDelete(g_buf);
     C2D_FontFree(g_font);
