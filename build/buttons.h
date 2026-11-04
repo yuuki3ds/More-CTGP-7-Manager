@@ -4,3 +4,5 @@
 #define buttons_tinyButtonBackground_idx 0
 #define buttons_selTinyButtonBackground_idx 1
 #define buttons_selFrame_idx 2
+#define buttons_blueMask_idx 3
+#define buttons_selBlueMask_idx 4

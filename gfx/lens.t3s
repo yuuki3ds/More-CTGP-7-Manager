@@ -1,0 +1,6 @@
+--atlas -f rgba8888 -z auto
+lens_disc.png
+lens_over.png
+lens_disc_sel.png
+lens_ring_sel.png
+lens_gloss.png
