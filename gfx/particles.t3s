@@ -1,0 +1,3 @@
+--atlas -f rgba8888 -z auto
+particle_big.png
+particle_small.png
