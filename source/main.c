@@ -1,4 +1,4 @@
-// More！CTGP-7 Manager Ver.1.2.3 - character folder manager for More!CTGP-7
+// More！CTGP-7 Manager Ver.1.2.4 - character folder manager for More!CTGP-7
 // Target: sdmc:/CTGP-7/MyStuff/Characters{1,2,3}
 // The folder named "Characters" (no number) is the active one.
 // No state file for folders: the active slot is detected from which folders exist.
@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <math.h>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -24,7 +25,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
-#define APP_VERSION "Ver.1.2.3"
+#define APP_VERSION "Ver.1.2.4"
 #define APP_NAME_1  "More！CTGP-7"
 #define APP_NAME_2  "Manager"          // used only if the logo image fails to load
 #define APP_AUTHOR  "yk"
@@ -62,14 +63,14 @@
 
 typedef struct {
     const char *title;
-    const char *current;       // "%d"
+    const char *current;       // "%s" = folder name
     const char *current_none;
     const char *tag_active;
     const char *help;
-    const char *already;       // "%d"
-    const char *done;          // "%d"
-    const char *fail_step1;    // "%d"
-    const char *fail_step2;    // "%d"
+    const char *already;       // "%s"
+    const char *done;          // "%s"
+    const char *fail_step1;    // "%s"
+    const char *fail_step2;    // "%s"
     const char *err_no_active;
     const char *err_ambiguous;
     const char *err_unexpected;
@@ -86,7 +87,7 @@ typedef struct {
     const char *on;
     const char *off;
     const char *lang_auto;
-    const char *confirm_msg;   // "%d"
+    const char *confirm_msg;   // "%s"
     const char *yes;
     const char *no;
     const char *about;
@@ -144,18 +145,39 @@ typedef struct {
     const char *confirm_reset;
     const char *confirm_launch;
     const char *notice_ctgp;
+    const char *rename_tip;
+    const char *custom_title;
+    const char *rename_btn;
+    const char *save_btn;
+    const char *reset_btn;
+    const char *saved_msg;
+    const char *name_bad;
+    const char *name_dup;
+    const char *name_fail;
+    const char *confirm_fold_save;
+    const char *confirm_fold_reset;
+    const char *rename_hint;
+    const char *extra_tip;
+    const char *ex_note;           // three lines
+    const char *name_rules_title;
+    const char *name_rules;        // two lines
+    const char *mario_talk;
+    const char *set_bgcolor;
+    const char *bg_default;
+    const char *random_btn;
+    const char *ai_title;
 } Strings;
 
 static const Strings STR_EN = {
     "More！CTGP-7 Manager",
-    "Active: Characters%d",
+    "Active: %s",
     "Active: none",
     "ACTIVE",
     "D-pad/Touch: select   A: OK   B: back   START: exit",
-    "Characters%d is already active.",
-    "Switched. Characters%d is now active.",
-    "Failed: Characters -> Characters%d",
-    "Failed: Characters%d -> Characters\nRolled back.",
+    "%s is already active.",
+    "Switched. %s is now active.",
+    "Failed: Characters -> %s",
+    "Failed: %s -> Characters\nRolled back.",
     "\"Characters\" was not found, and one of the\nnumbered folders is missing.\nPlease check the folders manually.",
     "\"Characters\" and Characters1-3 all exist.\nCannot tell which one is active.",
     "Unexpected folder layout.\nExpected \"Characters\" + two numbered folders,\nor three numbered folders.",
@@ -172,7 +194,7 @@ static const Strings STR_EN = {
     "ON",
     "OFF",
     "Auto",
-    "Switch to Characters%d?",
+    "Switch to %s?",
     "Yes",
     "No",
     "About this app",
@@ -230,18 +252,39 @@ static const Strings STR_EN = {
     "Reset all settings?",
     "Launch CTGP-7?",
     "CTGP-7 is not installed.",
+    "Rename folders",
+    "Custom Folders",
+    "Rename",
+    "Save changes",
+    "Reset",
+    "Saved.",
+    "That name cannot be used.",
+    "The name is already in use.",
+    "Could not rename the folders.",
+    "Save the changes?",
+    "Reset all folder names?",
+    "Enter a new folder name",
+    "Extra",
+    "This is a cheat code pack in txt format.\nIf you already have your own txt file,\nit will be overwritten.",
+    "Characters not allowed in folder names",
+    "Spaces at the start or end, a dot at the end,\nand the name \"Characters\" cannot be used.",
+    "Active",
+    "Customize background color",
+    "Default color",
+    "Random",
+    "Notice",
 };
 
 static const Strings STR_JA = {
     "More！CTGP-7 Manager",
-    "現在の有効フォルダ: Characters%d",
+    "現在の有効フォルダ: %s",
     "現在の有効フォルダ: なし",
     "有効",
     "十字キー/タッチ: 選択   A: 決定   B: 戻る   START: 終了",
-    "Characters%d は既に有効です。",
-    "切り替え完了: Characters%d が有効です。",
-    "失敗: Characters → Characters%d",
-    "失敗: Characters%d → Characters\n元に戻しました。",
+    "%s は既に有効です。",
+    "切り替え完了: %s が有効です。",
+    "失敗: Characters → %s",
+    "失敗: %s → Characters\n元に戻しました。",
     "Characters が見つからず、番号付きフォルダも\n1つ欠けています。手動で確認してください。",
     "Characters と Characters1〜3 が全て存在します。\nどれが有効か判定できません。",
     "フォルダ構成が想定外です。\n(Characters + 番号付き2つ、または番号付き3つ)",
@@ -258,7 +301,7 @@ static const Strings STR_JA = {
     "ON",
     "OFF",
     "自動",
-    "Characters%d に切り替えますか?",
+    "%s に切り替えますか?",
     "はい",
     "いいえ",
     "このアプリについて",
@@ -316,6 +359,27 @@ static const Strings STR_JA = {
     "設定を初期化しますか?",
     "CTGP-7を起動しますか?",
     "CTGP-7がインストールされていません。",
+    "フォルダ名を変更",
+    "カスタムフォルダ",
+    "名前を変更",
+    "変更を保存",
+    "リセット",
+    "保存しました。",
+    "その名前は使えません。",
+    "その名前は既に使われています。",
+    "フォルダの名前を変更できませんでした。",
+    "変更を保存しますか?",
+    "フォルダ名をリセットしますか?",
+    "新しいフォルダ名を入力",
+    "おまけ",
+    "Txt形式のチートコードパックです。\n独自のtxtが既に存在する場合、\n上書きされますのでご注意ください。",
+    "フォルダ名に使えない文字",
+    "先頭と末尾の空白、末尾のドット、\n「Characters」という名前も使えません。",
+    "有効中",
+    "背景の色をカスタマイズ",
+    "既定の色",
+    "ランダム",
+    "注意",
 };
 
 // ------------------------------------------------------------ config
@@ -330,6 +394,7 @@ typedef struct {
     int sfx;                      // sound effects (0/1)
     int bgm;                      // background music (0/1)
     int clock24;                  // 1 = 24-hour clock, 0 = 12-hour
+    int bg_hue;                   // background color: hue 0-359, -1 = default
 } Config;
 
 static void config_defaults(Config *c) {
@@ -341,6 +406,7 @@ static void config_defaults(Config *c) {
     c->sfx = 1;
     c->bgm = 1;
     c->clock24 = 1;
+    c->bg_hue = -1;
     snprintf(c->pack_url, sizeof c->pack_url, "%s", PACK_URL_DEFAULT);
 }
 
@@ -373,6 +439,7 @@ static void config_load(Config *c) {
         else if (!strcmp(key, "sfx")) c->sfx = v ? 1 : 0;
         else if (!strcmp(key, "bgm")) c->bgm = v ? 1 : 0;
         else if (!strcmp(key, "clock24")) c->clock24 = v ? 1 : 0;
+        else if (!strcmp(key, "bg_hue") && v >= -1 && v < 360) c->bg_hue = v;
     }
     fclose(f);
 }
@@ -382,10 +449,46 @@ static void config_save(const Config *c) {
     mkdir(CFG_DIR, 0777);
     FILE *f = fopen(CFG_PATH, "w");
     if (!f) return;
-    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\ncheck_update=%d\ndark=%d\nsfx=%d\nbgm=%d\nclock24=%d\n",
-            c->lang, c->confirm, c->exit_after, c->check_update, c->dark, c->sfx, c->bgm, c->clock24);
+    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\ncheck_update=%d\ndark=%d\nsfx=%d\nbgm=%d\nclock24=%d\nbg_hue=%d\n",
+            c->lang, c->confirm, c->exit_after, c->check_update, c->dark, c->sfx, c->bgm, c->clock24, c->bg_hue);
     if (strcmp(c->pack_url, PACK_URL_DEFAULT) != 0)     // only persist a custom URL
         fprintf(f, "pack_url=%s\n", c->pack_url);
+    fclose(f);
+}
+
+// ------------------------------------------------------------ custom folder names
+// g_names[i] is the real folder name of slot i+1 on the SD card while it is on standby. The
+// active slot is always called "Characters"; it gets its own name back when it is switched out.
+// One name per line in names.txt.
+
+#define NAMES_PATH CFG_DIR "/names.txt"
+#define NAME_CHARS 16                 // longest name, in characters
+#define NAME_BUF   (NAME_CHARS * 4 + 1)
+
+static char g_names[SLOTS][NAME_BUF];
+
+static void names_default(char names[SLOTS][NAME_BUF]) {
+    for (int i = 0; i < SLOTS; i++) snprintf(names[i], NAME_BUF, "Characters%d", i + 1);
+}
+
+static void names_load(void) {
+    names_default(g_names);
+    FILE *f = fopen(NAMES_PATH, "r");
+    if (!f) return;
+    char line[NAME_BUF + 8];
+    for (int i = 0; i < SLOTS && fgets(line, sizeof line, f); i++) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (line[0]) snprintf(g_names[i], NAME_BUF, "%s", line);
+    }
+    fclose(f);
+}
+
+static void names_save(void) {
+    mkdir("sdmc:/3ds", 0777);
+    mkdir(CFG_DIR, 0777);
+    FILE *f = fopen(NAMES_PATH, "w");
+    if (!f) return;
+    for (int i = 0; i < SLOTS; i++) fprintf(f, "%s\n", g_names[i]);
     fclose(f);
 }
 
@@ -899,6 +1002,8 @@ static bool upd_start(bool both, bool only_other) {
 // ------------------------------------------------------------ Extra menu (cheat downloads)
 
 #define EX_ITEMS 2
+#define NOTE_AI    EX_ITEMS         // note_dialog values after the Extra items
+#define NOTE_NAMES (EX_ITEMS + 1)
 static const char *EX_NAMES[EX_ITEMS] = { "MK7_Cheat", "ACNL_Cheat" };
 static const char *EX_FILES_MK7[]  = { "0004000000030600.txt", "0004000000030700.txt", "0004000000030800.txt" };
 static const char *EX_FILES_ACNL[] = { "0004000000086200.txt" };
@@ -1029,7 +1134,7 @@ static void ex_fetch_versions(void) {
 
 // SE_BGM is the background music; it uses the same loader on its own DSP channel.
 enum { SE_OK = 0, SE_CANCEL, SE_DECIDE, SE_CURSOR, SE_DLG_OPEN, SE_DLG_CLOSE, SE_SLOT,
-       SE_ATTENTION, SE_FOUND, SE_BUSY, SE_SCROLL, SE_COMPLETE, SE_ENGINE_IDLE, SE_ENGINE_GO, SE_BGM, SE_COUNT };
+       SE_ATTENTION, SE_FOUND, SE_BUSY, SE_SCROLL, SE_COMPLETE, SE_ENGINE_IDLE, SE_ENGINE_GO, SE_WIN_YES, SE_WIN_NO, SE_BGM, SE_COUNT };
 
 #define BGM_GAP_MS 3000   // silence between BGM loops
 
@@ -1048,6 +1153,8 @@ static const char *SE_FILES[SE_COUNT] = {
     "romfs:/sound/SE_SYS_CHAT_DECIDE.wav",         // update / cheat download finished
     "romfs:/sound/SE_SYS_RACE_READY_ENGINE_IDLING.wav",   // loops while "Launch CTGP-7?" is open
     "romfs:/sound/SE_SYS_RACE_GO_ENGINE.wav",      // CTGP-7 launches
+    "romfs:/sound/SE_RC_PAUSE_OFF.wav",            // window: OK / Yes / Update
+    "romfs:/sound/SE_RC_PAUSE_ON.wav",             // window: B / No / Later
     "romfs:/sound/SE_SYS_WIFI_MII_CUPSULE_MII_MOVE.wav",
 };
 
@@ -1207,7 +1314,52 @@ static int exists(const char *path) {
 }
 
 static void slot_path(char *out, size_t n, int slot) {
-    snprintf(out, n, BASE "Characters%d", slot);
+    snprintf(out, n, BASE "%s", g_names[slot - 1]);
+}
+
+// Must be a legal folder name and must not be the active folder's fixed name.
+static bool name_valid(const char *s) {
+    size_t n = strlen(s);
+    if (!n || s[0] == ' ' || s[n - 1] == ' ' || s[n - 1] == '.') return false;
+    if (strpbrk(s, "/\\:*?\"<>|")) return false;
+    return strcasecmp(s, "Characters") != 0;
+}
+
+// Renames the folders on the SD card to the edited names and stores them. Each folder goes
+// through a temporary name first, so names can be swapped; on failure everything is put back.
+// The active slot needs no rename: it is "Characters" and takes the new name when switched out.
+// Returns 0 = done, 1 = name already in use, 2 = rename failed.
+static int names_apply(char ed[SLOTS][NAME_BUF], int active) {
+    char oldp[SLOTS][256], newp[SLOTS][256], tmpp[SLOTS][256];
+    int st[SLOTS] = {0};                    // 0 untouched, 1 at temporary name, 2 at new name
+    bool ok = true;
+
+    for (int i = 0; i < SLOTS; i++) {
+        for (int j = i + 1; j < SLOTS; j++)
+            if (!strcasecmp(ed[i], ed[j])) return 1;
+        snprintf(oldp[i], sizeof oldp[i], BASE "%s", g_names[i]);
+        snprintf(newp[i], sizeof newp[i], BASE "%s", ed[i]);
+        snprintf(tmpp[i], sizeof tmpp[i], BASE ".mctgp7_tmp%d", i + 1);
+        bool ours = false;                  // a folder of that name that is not one of ours?
+        for (int k = 0; k < SLOTS; k++) if (!strcasecmp(ed[i], g_names[k])) ours = true;
+        if (!ours && exists(newp[i])) return 1;
+    }
+    for (int i = 0; i < SLOTS && ok; i++) {
+        if (i + 1 == active || !strcmp(ed[i], g_names[i]) || !exists(oldp[i])) continue;
+        if (rename(oldp[i], tmpp[i]) == 0) st[i] = 1; else ok = false;
+    }
+    for (int i = 0; i < SLOTS && ok; i++) {
+        if (st[i] != 1) continue;
+        if (rename(tmpp[i], newp[i]) == 0) st[i] = 2; else ok = false;
+    }
+    if (!ok) {
+        for (int i = 0; i < SLOTS; i++) if (st[i] == 2) { rename(newp[i], tmpp[i]); st[i] = 1; }
+        for (int i = 0; i < SLOTS; i++) if (st[i] == 1) rename(tmpp[i], oldp[i]);
+        return 2;
+    }
+    memcpy(g_names, ed, sizeof g_names);
+    names_save();
+    return 0;
 }
 
 typedef enum { ERR_NONE = 0, ERR_NO_ACTIVE, ERR_AMBIGUOUS, ERR_UNEXPECTED } ErrCode;
@@ -1333,6 +1485,7 @@ static u32 g_shadow;          // shadow color used by draw_text (set per context
 static float g_btn_sc = 0.6f; // label scale used by draw_button
 static float g_btn_reserve = 0; // space kept free on the right of a label (switches)
 static int g_btn_chars = -1;    // character picture on the next buttons (-1 = none)
+static float g_btn_indent = 0;  // extra space on the left of a label (icon)
 static bool g_btn_glass = true; // true: see-through MK7 menu button, false: image button (main screen)
 static bool g_text_outline = false; // draw_text: outline in the shadow color instead of a drop shadow
 static u32 g_held = 0;          // keys held this frame (for the pressed look)
@@ -1386,6 +1539,9 @@ static C2D_SpriteSheet g_shell  = NULL;   // shell that shoots across the top sc
 static C2D_SpriteSheet g_bowser = NULL;   // Bowser kart silhouette
 static C2D_SpriteSheet g_lakitu = NULL;   // Lakitu silhouette (fishing, floats above the others)
 static C2D_SpriteSheet g_chars  = NULL;   // 0: Mario (active button), 1: Mario & Luigi (launch button)
+static C2D_SpriteSheet g_spanner = NULL;  // silver spanner (custom folders)
+static C2D_SpriteSheet g_window = NULL;   // window backgrounds: 0 large (UPD_BOX), 1 small (DLG_BOX)
+static C2D_SpriteSheet g_parts  = NULL;   // bottom-screen square particles: 0 big, 1 small (white, tinted)
 static C2D_SpriteSheet g_back   = NULL;   // back tab (arrow + B) for the bottom-left corner
 static C2D_SpriteSheet g_lens   = NULL;   // round icons: 0 disc, 1 ring+gloss, 2 selected disc, 3 selected ring, 4 gloss
 
@@ -1432,13 +1588,35 @@ static void set_bg_dark(bool dark) {
     invert_sheet(g_bowser);
     invert_sheet(g_lakitu);
     invert_sheet(g_shell);
+    invert_sheet(g_window);
     g_bg_inverted = dark;
 }
+
+// ---- custom background color ----
+// hue only, so black and white cannot be chosen. The strength is fixed: pale in light mode and
+// dark in dark mode, so buttons and text stay readable.
+static u32 hsv_color(float h, float s, float v, u8 a) {
+    float c = v * s, hh = h / 60.0f, x = c * (1 - fabsf(fmodf(hh, 2.0f) - 1)), m = v - c, r = 0, g = 0, b = 0;
+    if (hh < 1) { r = c; g = x; } else if (hh < 2) { r = x; g = c; } else if (hh < 3) { g = c; b = x; }
+    else if (hh < 4) { g = x; b = c; } else if (hh < 5) { r = x; b = c; } else { r = c; b = x; }
+    return C2D_Color32((u8)((r + m) * 255), (u8)((g + m) * 255), (u8)((b + m) * 255), a);
+}
+
+static C2D_ImageTint g_bg_tint;
+static bool g_bg_tinted = false;
+
+static void bg_tint_update(int hue, bool dark) {
+    g_bg_tinted = hue >= 0;
+    if (g_bg_tinted)
+        C2D_PlainImageTint(&g_bg_tint, hsv_color(hue, dark ? 0.6f : 0.5f, dark ? 0.34f : 1.0f, 0xFF), dark ? 0.5f : 0.34f);
+}
+
+static const C2D_ImageTint *bg_tint(void) { return g_bg_tinted ? &g_bg_tint : NULL; }
 
 static void draw_bg(C2D_SpriteSheet sheet, float sw, float sh) {
     if (!sheet) return;
     C2D_Image im = C2D_SpriteSheetGetImage(sheet, 0);
-    C2D_DrawImageAt(im, 0, 0, 0.5f, NULL, sw / im.subtex->width, sh / im.subtex->height);
+    C2D_DrawImageAt(im, 0, 0, 0.5f, bg_tint(), sw / im.subtex->width, sh / im.subtex->height);
 }
 
 // ---- animated goal-tape (checker) strip at the bottom of both backgrounds ----
@@ -1446,11 +1624,9 @@ static void draw_bg(C2D_SpriteSheet sheet, float sw, float sh) {
 // Adjust these if the background images are replaced.
 #define TOP_TAPE_Y0 157
 #define TOP_TAPE_Y1 196
-#define BOT_TAPE_Y0 122
-#define BOT_TAPE_Y1 161
 #define TAPE_BORDER 3
 #define TAPE_PERIOD 64.0f
-#define TAPE_SPEED  14.0f          // image pixels per second (moves left)
+#define TAPE_SPEED  9.0f           // image pixels per second (moves left); 12 px/s on the top screen
 
 // draws image area [ix0,ix1) x [iy0,iy1) (image px) at screen dx,dy with scale sx,sy
 static void draw_img_part(C2D_Image im, float ix0, float ix1, float iy0, float iy1,
@@ -1483,9 +1659,57 @@ static void draw_tape(C2D_SpriteSheet sheet, float sw, float sh, int ty0, int ty
     if (y1 <= y0) return;
     float b = TAPE_BORDER;
     float off = fmodf((float)(osGetTime() % 1000000) * TAPE_SPEED / 1000.0f, TAPE_PERIOD);
+    off = floorf(off * sx) / sx;       // whole screen pixels: the stretched image would wobble between them
     // piece 1: [b+off, W-b) -> starts at b ; piece 2: one period back fills the right end
-    draw_img_part(im, b + off, W - b, y0, y1, b * sx, y0 * sy, sx, sy, NULL);
-    draw_img_part(im, W - b - TAPE_PERIOD, W - b - TAPE_PERIOD + off, y0, y1, (W - b - off) * sx, y0 * sy, sx, sy, NULL);
+    draw_img_part(im, b + off, W - b, y0, y1, b * sx, y0 * sy, sx, sy, bg_tint());
+    draw_img_part(im, W - b - TAPE_PERIOD, W - b - TAPE_PERIOD + off, y0, y1, (W - b - off) * sx, y0 * sy, sx, sy, bg_tint());
+}
+
+// ---- square particles on the bottom-screen background ----
+// Two 512 px wide patterns that repeat seamlessly. They stay inside the frame of the background.
+#define PART_FRAME   4.0f            // width of the frame
+#define PART_BIG_MS  42667           // big ones: one full pattern to the right (12 px/s)
+#define PART_SMALL_MS 42667          // small ones: one full pattern to the left (12 px/s)
+#define PART_SMALL_Y 74.0f           // top of the small band (middle of the screen)
+
+static float g_part_y0 = PART_FRAME, g_part_y1 = 240 - PART_FRAME;   // rows the particles may use
+
+static void draw_part_tile(C2D_Image im, float off, float y, const C2D_ImageTint *tint) {
+    float W = im.subtex->width, H = im.subtex->height;
+    float iy0 = y < g_part_y0 ? g_part_y0 - y : 0;
+    float iy1 = y + H > g_part_y1 ? g_part_y1 - y : H;
+    if (iy1 <= iy0) return;
+    for (int c = 0; c < 2; c++) {
+        float x = off - W + c * W;
+        float ix0 = x < PART_FRAME ? PART_FRAME - x : 0;
+        float ix1 = x + W > 320 - PART_FRAME ? 320 - PART_FRAME - x : W;
+        if (ix1 > ix0) draw_img_part(im, ix0, ix1, iy0, iy1, x + ix0, y + iy0, 1, 1, tint);
+    }
+}
+
+// Redraws rows y0..y1 of the bottom background with its particles (hides what was drawn there).
+static void draw_particles(bool dark);
+static void draw_bg_band(float y0, float y1, bool dark) {
+    if (!g_bot_bg) return;
+    draw_img_part(C2D_SpriteSheetGetImage(g_bot_bg, 0), 0, 320, y0, y1, 0, y0, 1, 1, bg_tint());
+    g_part_y0 = y0 < PART_FRAME ? PART_FRAME : y0;
+    g_part_y1 = y1 > 240 - PART_FRAME ? 240 - PART_FRAME : y1;
+    draw_particles(dark);
+    g_part_y0 = PART_FRAME;
+    g_part_y1 = 240 - PART_FRAME;
+}
+
+static void draw_particles(bool dark) {
+    if (!g_parts) return;
+    u64 now = osGetTime();
+    C2D_Image big = C2D_SpriteSheetGetImage(g_parts, 0), small = C2D_SpriteSheetGetImage(g_parts, 1);
+    C2D_ImageTint tb, ts;
+    C2D_PlainImageTint(&tb, C2D_Color32(0xFF, 0xFF, 0xFF, dark ? 0x2E : 0x4C), 1.0f);
+    C2D_PlainImageTint(&ts, C2D_Color32(0xFF, 0xFF, 0xFF, dark ? 0x1A : 0x2E), 1.0f);
+    float bw = big.subtex->width, sw = small.subtex->width;
+    // The rows sit off the grid of the checker background, so the squares do not line up with it.
+    draw_part_tile(big, (float)(now % PART_BIG_MS) / PART_BIG_MS * bw, -13, &tb);
+    draw_part_tile(small, sw - (float)(now % PART_SMALL_MS) / PART_SMALL_MS * sw, PART_SMALL_Y + 3, &ts);
 }
 
 // ---- racers (Mario, Bowser) & shells across the top screen ----
@@ -1498,7 +1722,7 @@ static void draw_tape(C2D_SpriteSheet sheet, float sw, float sh, int ty0, int ty
 //   bowser fire  : Bowser catches up with Mario, fires a shell at him and overtakes
 #define CYCLE_MIN_MS 30000          // 30 s
 #define CYCLE_MAX_MS 150000         // 2 min 30 s
-#define KART_SPEED   30.0f          // Mario: screen px per second (tape moves ~19 px/s on top)
+#define KART_SPEED   30.0f          // Mario: screen px per second
 #define BOWSER_SPEED (KART_SPEED * 2.0f)
 #define KART_GROUND  236.0f         // y of the wheels' bottom (Mario, shells)
 #define BOWSER_LANE  (-4.0f)        // Bowser runs on a lane slightly further back
@@ -1819,6 +2043,20 @@ static void draw_text_center(const char *s, float cx, float y, float sc, u32 col
     draw_text(s, cx - w / 2, y, sc, col);
 }
 
+// Several lines ('\n'), each centered.
+static void draw_lines_center(const char *s, float cx, float y, float sc, float step, u32 col) {
+    char l[160];
+    while (*s) {
+        size_t n = strcspn(s, "\n");
+        size_t cp = n < sizeof l - 1 ? n : sizeof l - 1;
+        memcpy(l, s, cp); l[cp] = '\0';
+        draw_text_center(l, cx, y, sc, col);
+        y += step;
+        s += n;
+        if (*s == '\n') s++;
+    }
+}
+
 // Cursor highlight color: loops yellow -> orange -> yellow (about 1.4 s per cycle).
 static u32 sel_color(void) {
     float t = 0.5f + 0.5f * sinf((float)(osGetTime() % 1400) / 1400.0f * 2.0f * (float)M_PI);
@@ -2038,12 +2276,12 @@ static void draw_button(Rect r, const char *label, const char *value,
     float w, h;
     text_size(label, sc, &w, &h);
     if (!center) {                          // shrink a long label so it never hits the switch/value
-        float room = r.w - 28 - g_btn_reserve;
+        float room = r.w - 28 - g_btn_reserve - g_btn_indent;
         if (w > room && w > 0) { sc *= room / w; text_size(label, sc, &w, &h); }
     }
     float ty = r.y + (r.h - h) / 2;
     if (center) draw_text(label, r.x + r.w / 2 - w / 2, ty, sc, tcol);
-    else draw_text(label, r.x + 14, ty, sc, tcol);
+    else draw_text(label, r.x + 14 + g_btn_indent, ty, sc, tcol);
 
     if (value && value[0]) {
         sc = g_btn_sc;
@@ -2126,7 +2364,7 @@ static void draw_round_rect(float x, float y, float w, float h, float rr, u32 c)
 }
 
 // Name plate of an Extra item: flat, with no shadow, so it does not look pressable.
-static void draw_name_plate(Rect r, const char *txt, u32 fill, u32 edge) {
+static void draw_name_plate(Rect r, const char *txt, u32 fill, u32 edge, u32 ink) {
     const float h = 28, y = r.y + (r.h - h) / 2;
     draw_round_rect(r.x, y, r.w, h, 5, edge);
     draw_round_rect(r.x + 1, y + 1, r.w - 2, h - 2, 4, fill);
@@ -2137,7 +2375,7 @@ static void draw_name_plate(Rect r, const char *txt, u32 fill, u32 edge) {
     float sc = 0.58f, tw, th, room = r.w - 26;
     text_size(txt, sc, &tw, &th);
     if (tw > room) { sc *= room / tw; text_size(txt, sc, &tw, &th); }
-    draw_text(txt, r.x + 16, y + (h - th) / 2, sc, COL_WHITE);       // theme text color
+    draw_text(txt, r.x + 16, y + (h - th) / 2, sc, ink);
     g_shadow = saved;
 }
 
@@ -2246,15 +2484,49 @@ static void draw_gear_button(Rect r, Rect hitr, bool sel) {
     draw_lens_top(cx, cy, R, sel, pressed);
 }
 
-// White speech bubble under an icon (pointer at cx, bubble top at y).
-static void draw_tooltip(float cx, float y, const char *txt) {
-    float sc = 0.5f, w, h;
+// Round "rename folder" button: a folder with A -> B inside
+static void draw_folder_button(Rect r, Rect hitr, bool sel) {
+    float cx, cy, R; bool pressed;
+    draw_lens_base(r, hitr, sel, &cx, &cy, &R, &pressed);
+    float k = R / 16.0f, w = 22 * k, h = 15 * k, x = cx - w / 2, y = cy - h / 2 + 1 * k;
+    u32 edge = C2D_Color32(0x6A, 0x4A, 0x10, 0xFF), body = C2D_Color32(0xF4, 0xC8, 0x48, 0xFF);
+    C2D_DrawRectSolid(x, y - 3 * k, 0.5f, 9 * k, 4 * k, edge);          // tab
+    C2D_DrawRectSolid(x + 1, y - 2 * k, 0.5f, 7 * k, 3 * k, body);
+    C2D_DrawRectSolid(x, y, 0.5f, w, h, edge);
+    C2D_DrawRectSolid(x + 1, y + 1, 0.5f, w - 2, h - 2, body);
+    u32 saved = g_shadow;
+    g_shadow = 0;
+    float sc = 0.32f * k, tw, th, my = y + h / 2;
+    u32 ink = C2D_Color32(0x40, 0x28, 0x00, 0xFF), arrow = C2D_Color32(0x16, 0x46, 0xB0, 0xFF);
+    text_size("A", sc, &tw, &th);
+    draw_text("A", x + 2 * k, my - th / 2, sc, ink);
+    draw_text("B", x + w - 2 * k - tw, my - th / 2, sc, ink);
+    C2D_DrawRectSolid(cx - 2.5f * k, my - 0.5f * k, 0.5f, 3 * k, 1 * k + 0.5f, arrow);
+    C2D_DrawTriangle(cx + 0.5f * k, my - 2 * k, arrow, cx + 0.5f * k, my + 2.5f * k, arrow,
+                     cx + 3 * k, my + 0.25f * k, arrow, 0.5f);
+    g_shadow = saved;
+    draw_lens_top(cx, cy, R, sel, pressed);
+}
+
+// Silver spanner icon, centered at cx,cy
+static void draw_spanner(float cx, float cy) {
+    if (!g_spanner) return;
+    C2D_Image im = C2D_SpriteSheetGetImage(g_spanner, 0);
+    C2D_DrawImageAt(im, cx - im.subtex->width / 2.0f, cy - im.subtex->height / 2.0f, 0.5f, NULL, 1.0f, 1.0f);
+}
+
+// White speech bubble next to an icon (pointer at cx,y; bubble below it, or above if up).
+static float g_tip_sc = 0.5f;    // text size of the next speech bubble
+
+static void draw_tooltip(float cx, float y, const char *txt, bool up) {
+    float sc = g_tip_sc, w, h;
     text_size(txt, sc, &w, &h);
     float bw = w + 14, bh = h + 6, rr = 5;
     float bx = cx - bw / 2;
     if (bx < 3) bx = 3;
     if (bx + bw > 317) bx = 317 - bw;
-    float by = y + 5;
+    float by = up ? y - 5 - bh : y + 5;
+    float bedge = up ? by + bh - 0.5f : by + 0.5f;     // edge of the bubble the pointer leaves from
     u32 white = C2D_Color32(0xFF, 0xFF, 0xFF, 0xF4), sh = C2D_Color32(0, 0, 0, 0x60);
 
     for (int pass = 0; pass < 2; pass++) {       // pass 0: shadow, pass 1: bubble
@@ -2266,7 +2538,7 @@ static void draw_tooltip(float cx, float y, const char *txt) {
         C2D_DrawCircleSolid(bx + bw - rr + o, by + rr + o, 0.5f, rr, c);
         C2D_DrawCircleSolid(bx + rr + o, by + bh - rr + o, 0.5f, rr, c);
         C2D_DrawCircleSolid(bx + bw - rr + o, by + bh - rr + o, 0.5f, rr, c);
-        C2D_DrawTriangle(cx - 5 + o, by + 0.5f + o, c, cx + 5 + o, by + 0.5f + o, c, cx + o, y + o, c, 0.5f);
+        C2D_DrawTriangle(cx - 5 + o, bedge + o, c, cx + 5 + o, bedge + o, c, cx + o, y + o, c, 0.5f);
     }
     u32 saved = g_shadow;
     g_shadow = 0;
@@ -2413,11 +2685,11 @@ static bool hit(Rect r, touchPosition t) {
 // ------------------------------------------------------------ UI layout (bottom screen 320x240)
 
 // Confirmation window. Reset and launch always ask; only DLG_SWITCH follows the "confirm" setting.
-enum { DLG_SWITCH = 0, DLG_RESET, DLG_LAUNCH };
+enum { DLG_SWITCH = 0, DLG_RESET, DLG_LAUNCH, DLG_FOLD_SAVE, DLG_FOLD_RESET };
 
-typedef enum { SCR_MAIN, SCR_SETTINGS, SCR_ABOUT, SCR_APPUPD, SCR_EXTRA } Screen;
+typedef enum { SCR_MAIN, SCR_SETTINGS, SCR_ABOUT, SCR_APPUPD, SCR_EXTRA, SCR_FOLDERS, SCR_BGCOLOR } Screen;
 
-#define MAIN_N 6
+#define MAIN_N 7
 static const Rect MAIN_R[MAIN_N] = {
     {36,  42, 248, 42},   // Characters1
     {36,  92, 248, 42},   // Characters2
@@ -2425,9 +2697,38 @@ static const Rect MAIN_R[MAIN_N] = {
     {60, 200, 200, 32},   // Launch CTGP-7 (separated)
     {283,  4,  32, 32},   // Settings (round gear, top right)
     {  5,  4,  32, 32},   // Extra (round "Ex", top left)
+    { 14, 202, 32, 32},   // Custom folders (round, bottom left)
 };
 static const Rect GEAR_HIT = {272, 0, 48, 44};   // larger touch area for the gear
 static const Rect EX_HIT   = {  0, 0, 48, 44};
+static const Rect FOLDER_HIT = { 0, 196, 56, 44};
+
+// Custom folders screen
+static const Rect FOLD_NAME_R[SLOTS] = { {10, 40, 150, 34}, {10, 88, 150, 34}, {10, 136, 150, 34} };
+static const Rect FOLD_BTN_R[SLOTS]  = { {166, 40, 144, 34}, {166, 88, 144, 34}, {166, 136, 144, 34} };
+static const Rect FOLD_SAVE  = { 90, 205, 130, 30};   // also used by the background color screen
+#define BG_BAR_X 30.0f
+#define BG_BAR_W 260.0f
+#define BG_BAR_Y 60.0f
+#define BG_BAR_H 26.0f
+#define BG_TRI_Y (BG_BAR_Y + BG_BAR_H + 3)
+#define BG_SEEK_Y (BG_TRI_Y + 20)
+static const Rect BG_TOUCH = {16, 54, 288, 76};       // touch area of the bar and the seek bar
+static const Rect BG_RANDOM = {100, 136, 120, 30};
+#define BG_RANDOM_MAX 329                             // the red at the right end stays out, or red would win
+#define FOLD_MARIO_H 28.0f                             // drawn height of Mario
+#define FOLD_MARIO_W 36.0f                             // drawn width of Mario
+
+// Touch area of Mario on row i: from where he is drawn to the right edge of the screen.
+static Rect fold_mario_hit(int i) {
+    Rect r = { FOLD_BTN_R[i].x + FOLD_BTN_R[i].w - 6 - FOLD_MARIO_W, FOLD_BTN_R[i].y, 0, FOLD_BTN_R[i].h };
+    r.w = 320 - r.x;
+    return r;
+}
+
+static const Rect FOLD_NOTE  = {288,   6,  26, 26};   // round "!" (name rules)
+static const Rect FOLD_NOTE_HIT = {272, 0, 48, 38};
+static const Rect FOLD_RESET = {226, 205,  84, 30};
 
 // Extra screen
 static const Rect EX_NAME_R[EX_ITEMS] = { {48, 60, 144, 34}, {48, 138, 144, 34} };
@@ -2436,7 +2737,7 @@ static const Rect EX_NOTE_HIT[EX_ITEMS] = { {4, 56, 42, 42}, {4, 134, 42, 42} };
 static const Rect EX_DL_R[EX_ITEMS]   = { {200, 60, 106, 34}, {200, 138, 106, 34} };
 
 // Settings: a scrollable list (LIST_N rows) + a fixed Back button (index LIST_N)
-#define LIST_N       11
+#define LIST_N       12
 #define SET_N        (LIST_N + 1)
 #define LIST_Y       28
 #define LIST_H       170
@@ -2468,6 +2769,18 @@ static const Rect DLG_YES = { 48, 124, 100, 36};
 static const Rect DLG_NO  = {172, 124, 100, 36};
 static const Rect UPD_BOX = { 12,  46, 296, 150};
 static const Rect DLG_OK  = {110, 150, 100, 34};
+
+// Background of a window, including its frame around the box (inverted in dark mode).
+static void draw_window(Rect b) {
+    if (!g_window) {
+        C2D_DrawRectSolid(b.x - 2, b.y - 2, 0.5f, b.w + 4, b.h + 4, COL_YELLOW);
+        C2D_DrawRectSolid(b.x, b.y, 0.5f, b.w, b.h, COL_BG);
+        return;
+    }
+    C2D_Image im = C2D_SpriteSheetGetImage(g_window, b.w > 280 ? 0 : 1);
+    C2D_DrawImageAt(im, b.x - 2, b.y - 2, 0.5f, NULL,
+                    (b.w + 4) / im.subtex->width, (b.h + 4) / im.subtex->height);
+}
 
 static const Strings *get_strings(const Config *c, bool sys_ja) {
     if (c->lang == 1) return &STR_JA;
@@ -2502,6 +2815,9 @@ int main(int argc, char **argv) {
     g_chars  = C2D_SpriteSheetLoad("romfs:/gfx/chars.t3x");
     g_lens   = C2D_SpriteSheetLoad("romfs:/gfx/lens.t3x");
     g_back   = C2D_SpriteSheetLoad("romfs:/gfx/back.t3x");
+    g_spanner = C2D_SpriteSheetLoad("romfs:/gfx/spanner.t3x");
+    g_parts  = C2D_SpriteSheetLoad("romfs:/gfx/particles.t3x");
+    g_window = C2D_SpriteSheetLoad("romfs:/gfx/window.t3x");
 
     bool sys_ja = false;
     u8 lang = CFG_LANGUAGE_EN;
@@ -2517,6 +2833,7 @@ int main(int argc, char **argv) {
         snprintf(g_upd.target, sizeof g_upd.target, "%s", DEFAULT_3DSX_PATH);
     Config cfg;
     config_load(&cfg);
+    names_load();
     apply_theme(cfg.dark);
     set_bg_dark(cfg.dark);
     g_sfx_on = cfg.sfx;
@@ -2555,8 +2872,15 @@ int main(int argc, char **argv) {
     bool t_drag = false;
     touchPosition t_start = {0, 0};
     int ex_cursor = 0;                     // extra screen: 0 MK7 DL, 1 ACNL DL, 2 back, 3 MK7 note, 4 ACNL note
+    int fold_cursor = 0;                   // custom folders: 0-2 rename, 3 save, 4 reset, 5 back, 6 "!"
+    char ed_names[SLOTS][NAME_BUF];        // names being edited (saved only by "Save changes")
+    int bg_cursor = 0;                     // background color: 0 seek bar, 1 save, 2 reset, 3 back, 4 random
+    int ed_hue = -1;                       // hue being chosen (shown live, saved only by "Save")
+    bool bg_saved = false, t_seek = false; // show "Saved." / seek bar is being dragged
+    bool mario_talk = false;               // custom folders: Mario's bubble, touch only
+    int fold_msg = 0;                      // 0 none, 1 saved, 2 bad name, 3 name in use, 4 rename failed
     int about_cursor = 0;                  // about screen: 0 back, 1 "!" note
-    int note_dialog = -1;                  // item whose region note is shown (-1 = none, EX_ITEMS = AI note)
+    int note_dialog = -1;                  // note window: Extra item, NOTE_AI, NOTE_NAMES (-1 = none)
     int appupd_cursor = 0;                 // app update screen: 0 check, 1 install, 2 back, 3 update both
 
     bool dialog = false;
@@ -2630,7 +2954,7 @@ int main(int argc, char **argv) {
         // state snapshot (used to pick the sound effect for this frame)
         Screen  pv_screen = screen;
         int     pv_cur = cursor, pv_set = set_cursor, pv_app = appupd_cursor, pv_ex = ex_cursor;
-        int     pv_about = about_cursor;
+        int     pv_about = about_cursor, pv_fold = fold_cursor, pv_bg = bg_cursor;
         bool    pv_yes = dlg_yes;
         bool    pv_appdlg = app_dialog, pv_appyes = app_yes;
         (void)pv_appdlg;
@@ -2672,18 +2996,26 @@ int main(int argc, char **argv) {
         bool do_perform = false;
         bool do_launch = false;
         bool do_appcheck = false;
+        int do_rename = -1;       // folder to open the keyboard for
 
         if (!notice && notice_queue && note_dialog < 0 && !dialog) {
             notice = (notice_queue & 8) ? 8 : (notice_queue & 1) ? 1 : (notice_queue & 2) ? 2 : 4;   // no CTGP-7 first
             notice_queue &= ~notice;
         }
 
+        // Windows: positive and negative answers have their own sound, on top of the closing sound
+        bool ok_btn = (down & KEY_A) || (tap && hit(DLG_OK, tp));
+        if (note_dialog >= 0 || notice || upd_dialog) {
+            if (ok_btn) sfx_play(SE_WIN_YES);
+            else if (down & KEY_B) sfx_play(SE_WIN_NO);
+        }
+
         if (note_dialog >= 0) {
-            if ((down & (KEY_A | KEY_B)) || (tap && hit(DLG_OK, tp))) note_dialog = -1;
+            if (ok_btn || (down & KEY_B)) note_dialog = -1;
         } else if (notice) {
-            if ((down & (KEY_A | KEY_B)) || (tap && hit(DLG_OK, tp))) notice = 0;
+            if (ok_btn || (down & KEY_B)) notice = 0;
         } else if (upd_dialog) {
-            if ((down & (KEY_A | KEY_B)) || (tap && hit(DLG_OK, tp))) upd_dialog = false;
+            if (ok_btn || (down & KEY_B)) upd_dialog = false;
         } else if (app_dialog) {
             if (down & (KEY_LEFT | KEY_RIGHT)) app_yes = !app_yes;
             bool go = false, close = false;
@@ -2697,8 +3029,10 @@ int main(int argc, char **argv) {
                 app_dialog = false;
                 screen = SCR_APPUPD;
                 appupd_cursor = 1;              // cursor on "Download and install"
+                sfx_play(SE_WIN_YES);
             } else if (close) {
                 app_dialog = false;
+                sfx_play(SE_WIN_NO);
             }
         } else if (dialog) {
             if (down & (KEY_LEFT | KEY_RIGHT)) dlg_yes = !dlg_yes;
@@ -2711,28 +3045,119 @@ int main(int argc, char **argv) {
                 if (hit(DLG_YES, tp)) { do_perform = true; dialog = false; }
                 else if (hit(DLG_NO, tp)) dialog = false;
             }
+            if (!dialog && !(do_perform && dlg_kind == DLG_LAUNCH))      // launching has its own sounds
+                sfx_play(do_perform ? SE_WIN_YES : SE_WIN_NO);
         } else if (screen == SCR_MAIN) {
             int act = -1;
-            // order: Ex(5) -> 1 -> 2 -> 3 -> Launch -> Gear(4) -> Ex ...; left/right on the top icons
-            static const int order[MAIN_N] = { 5, 0, 1, 2, 3, 4 };
+            // order: Ex(5) -> 1 -> 2 -> 3 -> Launch -> Folders(6) -> Gear(4) -> Ex ...; left/right on the icons
+            static const int order[MAIN_N] = { 5, 0, 1, 2, 3, 6, 4 };
             int pos = 0;
             for (int i = 0; i < MAIN_N; i++) if (order[i] == cursor) pos = i;
             if (down & KEY_UP)   cursor = order[(pos + MAIN_N - 1) % MAIN_N];
             if (down & KEY_DOWN) cursor = order[(pos + 1) % MAIN_N];
             if ((down & KEY_LEFT) && cursor == 4) cursor = 5;
             if ((down & KEY_RIGHT) && cursor == 5) cursor = 4;
+            if ((down & KEY_LEFT) && cursor == 3) cursor = 6;
+            if ((down & KEY_RIGHT) && cursor == 6) cursor = 3;
             if (down & KEY_A) act = cursor;
             if (tap) {
                 for (int i = 0; i < MAIN_N; i++) {
-                    Rect hr = i == 4 ? GEAR_HIT : (i == 5 ? EX_HIT : MAIN_R[i]);
+                    Rect hr = i == 4 ? GEAR_HIT : (i == 5 ? EX_HIT : (i == 6 ? FOLDER_HIT : MAIN_R[i]));
                     if (hit(hr, tp)) { cursor = i; act = i; break; }
                 }
             }
             if (act >= 0) ok_sfx = true;
             if (act >= 0 && act < 3) do_slot = act + 1;
             else if (act == 3) { dialog = true; dlg_kind = DLG_LAUNCH; dlg_yes = true; }
-            else if (act == 4) { screen = SCR_SETTINGS; set_cursor = 0; }
+            else if (act == 4) {                    // cursor and scroll stay where they were left
+                screen = SCR_SETTINGS;
+                if (set_cursor < LIST_N) {          // the list may have been dragged away from the cursor
+                    int ctop = set_cursor * ROW_PITCH;
+                    if (ctop < scroll) scroll = ctop;
+                    if (ctop + ROW_H > scroll + LIST_H) scroll = ctop + ROW_H - LIST_H;
+                }
+            }
             else if (act == 5) { screen = SCR_EXTRA; ex_cursor = 0; ex_fetch_versions(); }
+            else if (act == 6) {
+                screen = SCR_FOLDERS;
+                fold_cursor = 0;
+                fold_msg = 0;
+                mario_talk = false;
+                memcpy(ed_names, g_names, sizeof ed_names);
+            }
+        } else if (screen == SCR_BGCOLOR) {
+            if (down & KEY_UP)   bg_cursor = bg_cursor == 0 ? 1 : bg_cursor == 4 ? 0 : 4;
+            if (down & KEY_DOWN) bg_cursor = bg_cursor == 0 ? 4 : bg_cursor == 4 ? 1 : 0;
+            if (bg_cursor == 0 && (held & (KEY_LEFT | KEY_RIGHT))) {       // hold to keep sliding
+                int h = (ed_hue < 0 ? 0 : ed_hue) + ((held & KEY_RIGHT) ? 1 : -1);
+                ed_hue = h < 0 ? 0 : h > 359 ? 359 : h;
+                bg_saved = false;
+            } else {
+                if (down & KEY_LEFT)  { if (bg_cursor == 1) bg_cursor = 3; else if (bg_cursor == 2) bg_cursor = 1; }
+                if (down & KEY_RIGHT) { if (bg_cursor == 3) bg_cursor = 1; else if (bg_cursor == 1) bg_cursor = 2; }
+            }
+            int act = -1;
+            if (down & KEY_A) act = bg_cursor;
+            if (down & KEY_B) screen = SCR_SETTINGS;        // the color goes back to the saved one
+            if (tap) {
+                if (hit(BG_TOUCH, tp)) { t_seek = true; bg_cursor = 0; }
+                else if (hit(FOLD_SAVE, tp)) act = 1;
+                else if (hit(FOLD_RESET, tp)) act = 2;
+                else if (hit(ABOUT_BACK, tp)) act = 3;
+                else if (hit(BG_RANDOM, tp)) act = 4;
+                if (act >= 0) bg_cursor = act;
+            }
+            if (t_seek && (held & KEY_TOUCH)) {
+                float f = ((float)tp.px - BG_BAR_X) / BG_BAR_W;
+                ed_hue = (int)((f < 0 ? 0 : f > 1 ? 1 : f) * 359);
+                bg_saved = false;
+            }
+            if (up & KEY_TOUCH) t_seek = false;
+            if (act == 1) {
+                ok_sfx = true;
+                cfg.bg_hue = ed_hue;
+                config_save(&cfg);
+                bg_saved = true;
+            } else if (act == 2) {
+                ok_sfx = true;
+                ed_hue = -1;
+                bg_saved = false;
+            } else if (act == 4) {
+                ok_sfx = true;
+                ed_hue = rand_range(0, BG_RANDOM_MAX);
+                bg_saved = false;
+            } else if (act == 3) screen = SCR_SETTINGS;
+        } else if (screen == SCR_FOLDERS) {
+            bool bottom = fold_cursor >= 3 && fold_cursor <= 5;
+            bool top_btn = fold_cursor == 6;
+            if (down & KEY_UP)   fold_cursor = top_btn ? 3 : bottom ? 2 : (fold_cursor == 0 ? 6 : fold_cursor - 1);
+            if (down & KEY_DOWN) fold_cursor = top_btn ? 0 : bottom ? 6 : fold_cursor + 1;
+            if (down & KEY_LEFT)  { if (fold_cursor == 3) fold_cursor = 5; else if (fold_cursor == 4) fold_cursor = 3; }
+            if (down & KEY_RIGHT) { if (fold_cursor == 5) fold_cursor = 3; else if (fold_cursor == 3) fold_cursor = 4; }
+            int act = -1;
+            if (down & KEY_A) act = fold_cursor;
+            if (down & KEY_B) screen = SCR_MAIN;          // unsaved edits are dropped
+            bool mario_tap = tap && active > 0 && hit(fold_mario_hit(active - 1), tp);
+            if (mario_tap) {                              // Mario is no button: the cursor stays away
+                mario_talk = !mario_talk;
+                force_se = mario_talk ? SE_DLG_OPEN : SE_DLG_CLOSE;
+            } else if (tap) {
+                for (int i = 0; i < SLOTS; i++) if (hit(FOLD_BTN_R[i], tp)) act = i;
+                if (hit(FOLD_SAVE, tp)) act = 3;
+                if (hit(FOLD_RESET, tp)) act = 4;
+                if (hit(ABOUT_BACK, tp)) act = 5;
+                if (hit(FOLD_NOTE_HIT, tp)) act = 6;
+                if (act >= 0) fold_cursor = act;
+            }
+            if (act >= 0 && act < SLOTS) { ok_sfx = true; do_rename = act; }
+            else if (act == 3) {
+                sfx_play(SE_OK);                    // with the window opening sound
+                dialog = true; dlg_kind = DLG_FOLD_SAVE; dlg_yes = true;
+            } else if (act == 4) {
+                sfx_play(SE_OK);
+                dialog = true; dlg_kind = DLG_FOLD_RESET; dlg_yes = false;
+            } else if (act == 5) screen = SCR_MAIN;
+            else if (act == 6) note_dialog = NOTE_NAMES;
         } else if (screen == SCR_EXTRA) {
             if (!ex_busy()) {
                 // two columns: note (3,4) | download (0,1); back (2) is shared
@@ -2770,7 +3195,7 @@ int main(int argc, char **argv) {
                 if (act >= 0) about_cursor = act;
             }
             if (act == 0) screen = SCR_SETTINGS;
-            else if (act == 1) note_dialog = EX_ITEMS;
+            else if (act == 1) note_dialog = NOTE_AI;
         } else if (screen == SCR_APPUPD) {
             // buttons: 0 check, 1 install/restart/exit (only when shown), 3 update both (only when shown), 2 back
             bool newer = g_app.state == CHK_DONE && has_digit(g_app.remote) &&
@@ -2896,24 +3321,33 @@ int main(int argc, char **argv) {
                 case 6: cfg.exit_after = !cfg.exit_after; changed = true; break;
                 case 7: cfg.check_update = !cfg.check_update; changed = true; break;
                 case 8:
-                    if (!lr) { screen = SCR_APPUPD; appupd_cursor = 0; }
+                    if (!lr) {
+                        screen = SCR_BGCOLOR;
+                        bg_cursor = 0;
+                        ed_hue = cfg.bg_hue;
+                        bg_saved = false;
+                        t_seek = false;
+                    }
                     break;
                 case 9:
-                    if (!lr) { dialog = true; dlg_kind = DLG_RESET; dlg_yes = false; }
+                    if (!lr) { screen = SCR_APPUPD; appupd_cursor = 0; }
                     break;
                 case 10:
+                    if (!lr) { dialog = true; dlg_kind = DLG_RESET; dlg_yes = false; }
+                    break;
+                case 11:
                     if (!lr) {
                         load_pack_version(pack_ver, sizeof pack_ver);
                         screen = SCR_ABOUT;
                         about_cursor = 0;
                     }
                     break;
-                case 11:
+                case 12:
                     if (!lr) screen = SCR_MAIN;
                     break;
                 }
                 if (act < LIST_N) ok_sfx = true;
-                if (act == 8 || act == 9 || act == 10) ok_plain = true;   // app update / reset / about
+                if (act >= 8 && act <= 11) ok_plain = true;   // background color / app update / reset / about
                 if (changed) {
                     config_save(&cfg);
                     apply_theme(cfg.dark);
@@ -2943,6 +3377,16 @@ int main(int argc, char **argv) {
             g_sfx_on = cfg.sfx;
         } else if (do_perform && dlg_kind == DLG_LAUNCH) {
             do_launch = true;
+        } else if (do_perform && dlg_kind == DLG_FOLD_SAVE) {
+            int r = names_apply(ed_names, active);
+            fold_msg = r == 0 ? 1 : r == 1 ? 3 : 4;
+            if (r == 0) {
+                active = detect_active(&err);
+                if (active < 0) active = 0;
+            }
+        } else if (do_perform && dlg_kind == DLG_FOLD_RESET) {
+            names_default(ed_names);
+            fold_msg = 0;
         } else if (do_perform) {
             msg_kind = do_switch(active, dlg_target, &msg_arg);
             active = detect_active(&err);
@@ -2979,7 +3423,8 @@ int main(int argc, char **argv) {
             int se = force_se;
             bool back = (pv_screen == SCR_SETTINGS && screen == SCR_MAIN) ||
                         (pv_screen == SCR_EXTRA && screen == SCR_MAIN) ||
-                        ((pv_screen == SCR_ABOUT || pv_screen == SCR_APPUPD) && screen == SCR_SETTINGS);
+                        (pv_screen == SCR_FOLDERS && screen == SCR_MAIN) ||
+                        ((pv_screen == SCR_ABOUT || pv_screen == SCR_APPUPD || pv_screen == SCR_BGCOLOR) && screen == SCR_SETTINGS);
             int vis = VIS_NOW;
             if (se < 0) {
                 if (vis != pv_vis && vis != 0)              // a window appeared
@@ -2993,7 +3438,8 @@ int main(int argc, char **argv) {
                           pv_screen == SCR_ABOUT) ? SE_SLOT : SE_OK;
                 else if (cursor != pv_cur || set_cursor != pv_set ||
                          appupd_cursor != pv_app || dlg_yes != pv_yes ||
-                         app_yes != pv_appyes || ex_cursor != pv_ex || about_cursor != pv_about) se = SE_CURSOR;
+                         app_yes != pv_appyes || ex_cursor != pv_ex || about_cursor != pv_about ||
+                         fold_cursor != pv_fold || bg_cursor != pv_bg) se = SE_CURSOR;
             }
             if (se >= 0) sfx_play(se);
 
@@ -3029,6 +3475,24 @@ int main(int argc, char **argv) {
 
         bgm_update(cfg.bgm && !quit_pending && !installing);    // stop BGM while exiting / launching / installing
 
+        // ---------- system keyboard (blocks until closed; only called between frames) ----------
+        if (do_rename >= 0) {
+            SwkbdState kb;
+            char out[NAME_BUF] = "";
+            swkbdInit(&kb, SWKBD_TYPE_NORMAL, 2, NAME_CHARS);
+            swkbdSetInitialText(&kb, ed_names[do_rename]);
+            swkbdSetHintText(&kb, S->rename_hint);      // shown faintly while the field is empty
+            swkbdSetValidation(&kb, SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
+            if (swkbdInputText(&kb, out, sizeof out) == SWKBD_BUTTON_CONFIRM && out[0]) {
+                if (name_valid(out)) {
+                    snprintf(ed_names[do_rename], NAME_BUF, "%s", out);
+                    fold_msg = 0;
+                } else {
+                    fold_msg = 2;
+                }
+            }
+        }
+
         // ---------- build strings ----------
         char line[200], msg[256] = "";
         const char *errtxt = "";
@@ -3037,10 +3501,10 @@ int main(int argc, char **argv) {
         else if (err == ERR_UNEXPECTED) errtxt = S->err_unexpected;
 
         switch (msg_kind) {
-        case MSG_ALREADY: snprintf(msg, sizeof msg, S->already, msg_arg); break;
-        case MSG_DONE:    snprintf(msg, sizeof msg, S->done, msg_arg); break;
-        case MSG_FAIL1:   snprintf(msg, sizeof msg, S->fail_step1, msg_arg); break;
-        case MSG_FAIL2:   snprintf(msg, sizeof msg, S->fail_step2, msg_arg); break;
+        case MSG_ALREADY: snprintf(msg, sizeof msg, S->already, g_names[msg_arg - 1]); break;
+        case MSG_DONE:    snprintf(msg, sizeof msg, S->done, g_names[msg_arg - 1]); break;
+        case MSG_FAIL1:   snprintf(msg, sizeof msg, S->fail_step1, g_names[msg_arg - 1]); break;
+        case MSG_FAIL2:   snprintf(msg, sizeof msg, S->fail_step2, g_names[msg_arg - 1]); break;
         case MSG_NOLAUNCH: snprintf(msg, sizeof msg, "%s", S->launch_fail); break;
         default: break;
         }
@@ -3051,6 +3515,8 @@ int main(int argc, char **argv) {
             g_slide_t0 = osGetTime();
             sfx_play(SE_SCROLL);
         }
+
+        bg_tint_update(screen == SCR_BGCOLOR ? ed_hue : cfg.bg_hue, cfg.dark);   // live while choosing
 
         // ---------- draw ----------
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
@@ -3075,7 +3541,7 @@ int main(int argc, char **argv) {
             draw_text(S->err_footer, 14, 172, 0.5f, COL_GRAY);
         } else {
             if (active == 0) snprintf(line, sizeof line, "%s", S->current_none);
-            else snprintf(line, sizeof line, S->current, active);
+            else snprintf(line, sizeof line, S->current, g_names[active - 1]);
             draw_text(line, 14, 114, 0.65f, COL_WHITE);
             if (msg[0]) {
                 bool bad = (msg_kind == MSG_FAIL1 || msg_kind == MSG_FAIL2 || msg_kind == MSG_NOLAUNCH);
@@ -3095,18 +3561,20 @@ int main(int argc, char **argv) {
         C2D_TargetClear(bot, COL_BG);
         C2D_SceneBegin(bot);
         draw_bg(g_bot_bg, 320, 240);
-        if (!installing) draw_tape(g_bot_bg, 320, 240, BOT_TAPE_Y0, BOT_TAPE_Y1, 0, 240);
+        draw_particles(cfg.dark);
 
         if (screen == SCR_MAIN) {
             draw_text_center(S->select_slot, 160, 8, 0.7f, COL_YELLOW);
             g_btn_sc = 0.72f;
             g_btn_glass = false;                        // only these keep the image buttons
             for (int i = 0; i < SLOTS; i++) {
-                snprintf(line, sizeof line, "Characters%d", i + 1);
+                snprintf(line, sizeof line, "%s", g_names[i]);
                 bool is_act = (active == i + 1);
+                g_btn_reserve = is_act ? 100 : 0;       // a long name must not reach "active" and Mario
                 draw_button(slid(MAIN_R[i], i + 1), line, is_act ? S->tag_active : "",
                             !dialog && cursor == i, is_act, err == ERR_NONE, false);
             }
+            g_btn_reserve = 0;
             g_btn_sc = 0.6f;
             g_btn_chars = 1;
             g_btn_reserve = 46;
@@ -3116,11 +3584,96 @@ int main(int argc, char **argv) {
             g_btn_glass = true;
             draw_gear_button(slid(MAIN_R[4], 0), GEAR_HIT, !dialog && cursor == 4);
             draw_ex_button(slid(MAIN_R[5], 0), EX_HIT, !dialog && cursor == 5);
+            draw_folder_button(slid(MAIN_R[6], 5), FOLDER_HIT, !dialog && cursor == 6);
             // name bubbles (only for the icon under the cursor)
             if (!dialog && cursor == 4)
-                draw_tooltip(MAIN_R[4].x + slide_dx(0) + MAIN_R[4].w / 2, MAIN_R[4].y + MAIN_R[4].h + 3, S->settings);
+                draw_tooltip(MAIN_R[4].x + slide_dx(0) + MAIN_R[4].w / 2, MAIN_R[4].y + MAIN_R[4].h + 3, S->settings, false);
             if (!dialog && cursor == 5)
-                draw_tooltip(MAIN_R[5].x + slide_dx(0) + MAIN_R[5].w / 2, MAIN_R[5].y + MAIN_R[5].h + 3, "Extra");
+                draw_tooltip(MAIN_R[5].x + slide_dx(0) + MAIN_R[5].w / 2, MAIN_R[5].y + MAIN_R[5].h + 3, S->extra_tip, false);
+            if (!dialog && cursor == 6)
+                draw_tooltip(MAIN_R[6].x + slide_dx(5) + MAIN_R[6].w / 2, MAIN_R[6].y - 3, S->rename_tip, true);
+        } else if (screen == SCR_BGCOLOR) {
+            draw_text_center(S->set_bgcolor, 160, 8, 0.65f, COL_YELLOW);
+            float pos = BG_BAR_X + (ed_hue < 0 ? 0 : ed_hue) / 359.0f * BG_BAR_W;
+            {                                           // color bar: every hue that can be chosen
+                float dx = slide_dx(0), step = BG_BAR_W / 36.0f;
+                draw_frame(BG_BAR_X + dx - 1, BG_BAR_Y - 1, BG_BAR_W + 2, BG_BAR_H + 2, C2D_Color32(0x30, 0x34, 0x3C, 0xFF));
+                for (int i = 0; i < 36; i++) {
+                    u32 c0 = hsv_color(i * 10, cfg.dark ? 0.6f : 0.5f, cfg.dark ? 0.6f : 1.0f, 0xFF);
+                    u32 c1 = hsv_color((i + 1) % 36 * 10, cfg.dark ? 0.6f : 0.5f, cfg.dark ? 0.6f : 1.0f, 0xFF);
+                    C2D_DrawRectangle(BG_BAR_X + dx + i * step, BG_BAR_Y, 0.5f, step, BG_BAR_H, c0, c1, c0, c1);
+                }
+            }
+            {                                           // triangle marker, moves with the knob
+                float tx = pos + slide_dx(1);
+                C2D_DrawTriangle(tx, BG_TRI_Y, COL_WHITE, tx - 7, BG_TRI_Y + 11, COL_WHITE, tx + 7, BG_TRI_Y + 11, COL_WHITE, 0.5f);
+            }
+            {                                           // seek bar
+                float dx = slide_dx(2), kx = pos + dx, ky = BG_SEEK_Y + 3;
+                bool sel = !dialog && bg_cursor == 0;
+                C2D_DrawRectSolid(BG_BAR_X + dx, BG_SEEK_Y, 0.5f, BG_BAR_W, 6, C2D_Color32(0x30, 0x34, 0x3C, 0xFF));
+                C2D_DrawRectSolid(BG_BAR_X + dx + 1, BG_SEEK_Y + 1, 0.5f, BG_BAR_W - 2, 4, C2D_Color32(0xC8, 0xCC, 0xD4, 0xFF));
+                if (sel) C2D_DrawCircleSolid(kx, ky, 0.5f, 12, sel_color());
+                C2D_DrawCircleSolid(kx, ky, 0.5f, 10, C2D_Color32(0x30, 0x34, 0x3C, 0xFF));
+                C2D_DrawCircle(kx, ky, 0.5f, 9, C2D_Color32(0xFF, 0xFF, 0xFF, 0xFF), C2D_Color32(0xFF, 0xFF, 0xFF, 0xFF),
+                               C2D_Color32(0xA8, 0xAE, 0xBA, 0xFF), C2D_Color32(0xA8, 0xAE, 0xBA, 0xFF));
+            }
+            if (bg_saved) draw_text_center(S->saved_msg, 160, 176, 0.55f, COL_GREEN);
+            else if (ed_hue < 0) draw_text_center(S->bg_default, 160, 176, 0.5f, COL_GRAY);
+            g_btn_sc = 0.5f;
+            draw_button(slid(BG_RANDOM, 3), S->random_btn, "", !dialog && bg_cursor == 4, false, true, true);
+            draw_button(slid(FOLD_SAVE, 4), S->save_btn, "", !dialog && bg_cursor == 1, false, true, true);
+            draw_button(slid(FOLD_RESET, 4), S->reset_btn, "", !dialog && bg_cursor == 2, false, true, true);
+            g_btn_sc = 0.6f;
+            draw_back_tab(slid(ABOUT_BACK, 4), !dialog && bg_cursor == 3, true);
+        } else if (screen == SCR_FOLDERS) {
+            draw_text_center(S->custom_title, 160, 6, 0.75f, COL_YELLOW);
+            draw_note_button(slid(FOLD_NOTE, 0), FOLD_NOTE_HIT, note_dialog < 0 && fold_cursor == 6);
+            for (int i = 0; i < SLOTS; i++) {
+                Rect br = slid(FOLD_BTN_R[i], i);
+                static const u8 PLATE[2][SLOTS][6] = {  // fill, edge: red / yellow / green
+                    { { 0xF6, 0xCC, 0xCC, 0xC8, 0x60, 0x60 },    // light mode: pale
+                      { 0xF8, 0xEE, 0xBC, 0xC4, 0xA4, 0x3C },
+                      { 0xCC, 0xEE, 0xCF, 0x58, 0xA8, 0x68 } },
+                    { { 0x3A, 0x1E, 0x24, 0x8E, 0x4A, 0x54 },    // dark mode: blackish
+                      { 0x3A, 0x32, 0x16, 0x96, 0x82, 0x3C },
+                      { 0x1A, 0x32, 0x26, 0x45, 0x86, 0x60 } },
+                };
+                const u8 *pc = PLATE[cfg.dark ? 1 : 0][i];
+                bool is_act = active == i + 1;
+                draw_name_plate(slid(FOLD_NAME_R[i], i), ed_names[i],
+                                C2D_Color32(pc[0], pc[1], pc[2], 0xFF), C2D_Color32(pc[3], pc[4], pc[5], 0xFF),
+                                COL_WHITE);
+                g_btn_sc = 0.5f;
+                g_btn_indent = 22;
+                g_press_block = is_act && (g_held & KEY_TOUCH) && hit(fold_mario_hit(i), g_touch);   // touching Mario
+                draw_button(br, S->rename_btn, "", !dialog && fold_cursor == i, false, true, false);
+                g_press_block = false;
+                g_btn_indent = 0;
+                {
+                    float pd = btn_pressed(br, fold_cursor == i, true) ? PRESS_DY : 0;
+                    draw_spanner(br.x + 23, br.y + br.h / 2 + pd);
+                    if (is_act && g_chars) {            // Mario at the right end, inside the button
+                        C2D_Image mi = C2D_SpriteSheetGetImage(g_chars, 0);
+                        float mh = FOLD_MARIO_H, mk = mh / mi.subtex->height;
+                        C2D_DrawImageAt(mi, br.x + br.w - 6 - mi.subtex->width * mk, br.y + br.h - 2 - mh + pd,
+                                        0.5f, NULL, mk, mk);
+                    }
+                }
+            }
+            if (fold_msg == 1) draw_text_center(S->saved_msg, 160, 178, 0.55f, COL_GREEN);
+            else if (fold_msg) draw_text_center(fold_msg == 2 ? S->name_bad : fold_msg == 3 ? S->name_dup : S->name_fail,
+                                                160, 178, 0.55f, COL_RED);
+            draw_button(slid(FOLD_SAVE, 3), S->save_btn, "", !dialog && fold_cursor == 3, false, true, true);
+            draw_button(slid(FOLD_RESET, 3), S->reset_btn, "", !dialog && fold_cursor == 4, false, true, true);
+            g_btn_sc = 0.6f;
+            draw_back_tab(slid(ABOUT_BACK, 3), !dialog && fold_cursor == 5, true);
+            if (mario_talk && active > 0) {             // on top of the rows; the pointer reaches his mouth
+                Rect mr = slid(fold_mario_hit(active - 1), active - 1);
+                g_tip_sc = 0.4f;
+                draw_tooltip(mr.x + FOLD_MARIO_W * 0.72f, mr.y + 15, S->mario_talk, true);
+                g_tip_sc = 0.5f;
+            }
         } else if (screen == SCR_EXTRA) {
             draw_text_center(APP_TEAM, 160, 6, 0.75f, COL_YELLOW);
             bool busy = ex_busy();
@@ -3150,7 +3703,8 @@ int main(int argc, char **argv) {
                                 cfg.dark ? (i == 0 ? C2D_Color32(0x3A, 0x1E, 0x24, 0xFF) : C2D_Color32(0x1A, 0x32, 0x26, 0xFF))
                                          : (i == 0 ? C2D_Color32(0xF6, 0xCC, 0xCC, 0xFF) : C2D_Color32(0xCC, 0xEE, 0xCF, 0xFF)),
                                 cfg.dark ? (i == 0 ? C2D_Color32(0x8E, 0x4A, 0x54, 0xFF) : C2D_Color32(0x45, 0x86, 0x60, 0xFF))
-                                         : (i == 0 ? C2D_Color32(0xC8, 0x60, 0x60, 0xFF) : C2D_Color32(0x58, 0xA8, 0x68, 0xFF)));
+                                         : (i == 0 ? C2D_Color32(0xC8, 0x60, 0x60, 0xFF) : C2D_Color32(0x58, 0xA8, 0x68, 0xFF)),
+                                COL_WHITE);
                 g_btn_sc = 0.52f;
                 draw_button(slid(EX_DL_R[i], i), S->dl_btn, "", !dialog && ex_cursor == i, false,
                             !busy, true);
@@ -3262,15 +3816,15 @@ int main(int argc, char **argv) {
             const char *langname = cfg.lang == 0 ? S->lang_auto : (cfg.lang == 1 ? "日本語" : "English");
             const char *labels[LIST_N] = {
                 S->set_language, S->set_clock, S->set_dark, S->set_sfx, S->set_bgm, S->set_confirm, S->set_exit, S->set_check,
-                S->set_appupd, S->set_reset, S->about
+                S->set_bgcolor, S->set_appupd, S->set_reset, S->about
             };
-            const char *values[LIST_N] = { langname, cfg.clock24 ? S->h24 : S->h12, "", "", "", "", "", "", "", "", "" };
+            const char *values[LIST_N] = { langname, cfg.clock24 ? S->h24 : S->h12, "", "", "", "", "", "", "", "", "", "" };
             // ON/OFF items (shown as switches); NULL = not a switch
             int *toggles[LIST_N] = {
                 NULL, NULL, &cfg.dark, &cfg.sfx, &cfg.bgm, &cfg.confirm, &cfg.exit_after, &cfg.check_update,
-                NULL, NULL, NULL
+                NULL, NULL, NULL, NULL
             };
-            static const bool centered[LIST_N] = { false, false, false, false, false, false, false, false, true, true, true };
+            static const bool centered[LIST_N] = { false, false, false, false, false, false, false, false, true, true, true, true };
             static float sw_anim[LIST_N];
             static bool sw_init = false;
             for (int i = 0; i < LIST_N; i++) {          // slide knobs toward their state
@@ -3297,9 +3851,11 @@ int main(int argc, char **argv) {
             }
             g_btn_reserve = 0;
             g_press_block = false;
-            // header and footer bands (same in both themes); they also hide rows scrolled past the list
+            // header and footer bands (same in both themes), see-through over the background
             {
-                u32 band = C2D_Color32(0x14, 0x2C, 0x6C, 0xFF), rule = C2D_Color32(0xE8, 0xC0, 0x40, 0xFF);
+                u32 band = C2D_Color32(0x14, 0x2C, 0x6C, 0xB8), rule = C2D_Color32(0xE8, 0xC0, 0x40, 0xFF);
+                draw_bg_band(0, LIST_Y, cfg.dark);      // covers the rows scrolled out of the list
+                draw_bg_band(LIST_Y + LIST_H, 240, cfg.dark);
                 C2D_DrawRectSolid(0, 0, 0.5f, 320, LIST_Y, band);
                 C2D_DrawRectSolid(0, LIST_Y - 2, 0.5f, 320, 2, rule);
                 C2D_DrawRectSolid(0, LIST_Y + LIST_H, 0.5f, 320, 240 - LIST_Y - LIST_H, band);
@@ -3322,20 +3878,25 @@ int main(int argc, char **argv) {
 
         if (dialog) {
             C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
-            C2D_DrawRectSolid(DLG_BOX.x - 2, DLG_BOX.y - 2, 0.5f, DLG_BOX.w + 4, DLG_BOX.h + 4, COL_YELLOW);
-            C2D_DrawRectSolid(DLG_BOX.x, DLG_BOX.y, 0.5f, DLG_BOX.w, DLG_BOX.h, COL_BG);
+            draw_window(DLG_BOX);
             if (dlg_kind == DLG_RESET) snprintf(line, sizeof line, "%s", S->confirm_reset);
             else if (dlg_kind == DLG_LAUNCH) snprintf(line, sizeof line, "%s", S->confirm_launch);
-            else snprintf(line, sizeof line, S->confirm_msg, dlg_target);
-            draw_text_center(line, 160, DLG_BOX.y + 22, 0.6f, COL_WHITE);
+            else if (dlg_kind == DLG_FOLD_SAVE) snprintf(line, sizeof line, "%s", S->confirm_fold_save);
+            else if (dlg_kind == DLG_FOLD_RESET) snprintf(line, sizeof line, "%s", S->confirm_fold_reset);
+            else snprintf(line, sizeof line, S->confirm_msg, g_names[dlg_target - 1]);
+            {                                           // a long folder name must fit the window
+                float dw, dh, dsc = 0.6f;
+                text_size(line, dsc, &dw, &dh);
+                if (dw > DLG_BOX.w - 12) dsc *= (DLG_BOX.w - 12) / dw;
+                draw_text_center(line, 160, DLG_BOX.y + 22, dsc, COL_WHITE);
+            }
             draw_button(DLG_YES, S->yes, "", dlg_yes, false, true, true);
             draw_button(DLG_NO, S->no, "", !dlg_yes, false, true, true);
         }
 
         if (upd_dialog) {
             C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
-            C2D_DrawRectSolid(UPD_BOX.x - 2, UPD_BOX.y - 2, 0.5f, UPD_BOX.w + 4, UPD_BOX.h + 4, COL_YELLOW);
-            C2D_DrawRectSolid(UPD_BOX.x, UPD_BOX.y, 0.5f, UPD_BOX.w, UPD_BOX.h, COL_BG);
+            draw_window(UPD_BOX);
             draw_text_center(S->update_msg, 160, UPD_BOX.y + 14, 0.55f, COL_YELLOW);
             snprintf(line, sizeof line, "%s: %s", S->current_label, pack_ver);
             draw_text_center(line, 160, UPD_BOX.y + 54, 0.55f, COL_WHITE);
@@ -3344,8 +3905,7 @@ int main(int argc, char **argv) {
             draw_button(DLG_OK, S->ok, "", true, false, true, true);
         } else if (app_dialog) {
             C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
-            C2D_DrawRectSolid(UPD_BOX.x - 2, UPD_BOX.y - 2, 0.5f, UPD_BOX.w + 4, UPD_BOX.h + 4, COL_YELLOW);
-            C2D_DrawRectSolid(UPD_BOX.x, UPD_BOX.y, 0.5f, UPD_BOX.w, UPD_BOX.h, COL_BG);
+            draw_window(UPD_BOX);
             draw_text_center(S->app_dlg_msg, 160, UPD_BOX.y + 14, 0.55f, COL_YELLOW);
             snprintf(line, sizeof line, "%s: %s", S->current_label, APP_VERSION);
             draw_text_center(line, 160, UPD_BOX.y + 46, 0.52f, COL_WHITE);
@@ -3357,9 +3917,15 @@ int main(int argc, char **argv) {
 
         if (notice) {
             C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
-            C2D_DrawRectSolid(UPD_BOX.x - 2, UPD_BOX.y - 2, 0.5f, UPD_BOX.w + 4, UPD_BOX.h + 4,
-                              C2D_Color32(0xF0, 0x50, 0x40, 0xFF));
-            C2D_DrawRectSolid(UPD_BOX.x, UPD_BOX.y, 0.5f, UPD_BOX.w, UPD_BOX.h, COL_BG);
+            draw_window(UPD_BOX);
+            {                                           // important: red frame over the window's own
+                Rect b = UPD_BOX;
+                u32 red = C2D_Color32(0xF0, 0x50, 0x40, 0xFF);
+                C2D_DrawRectSolid(b.x - 2, b.y - 2, 0.5f, b.w + 4, 3, red);
+                C2D_DrawRectSolid(b.x - 2, b.y + b.h - 1, 0.5f, b.w + 4, 3, red);
+                C2D_DrawRectSolid(b.x - 2, b.y + 1, 0.5f, 3, b.h - 2, red);
+                C2D_DrawRectSolid(b.x + b.w - 1, b.y + 1, 0.5f, 3, b.h - 2, red);
+            }
             draw_text_center(notice == 4 ? "!!!" : "!", 160, UPD_BOX.y + 10, 0.9f, COL_RED);
             if (notice == 4) {                                 // two lines, each centered
                 char l1[128];
@@ -3378,21 +3944,20 @@ int main(int argc, char **argv) {
 
         if (note_dialog >= 0) {
             C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
-            C2D_DrawRectSolid(UPD_BOX.x - 2, UPD_BOX.y - 2, 0.5f, UPD_BOX.w + 4, UPD_BOX.h + 4, sel_color());
-            C2D_DrawRectSolid(UPD_BOX.x, UPD_BOX.y, 0.5f, UPD_BOX.w, UPD_BOX.h, COL_BG);
-            if (note_dialog == EX_ITEMS) {                 // AI note: two lines, each centered
-                char l1[128];
-                const char *nl2 = strchr(S->ai_note, '\n');
-                size_t n = nl2 ? (size_t)(nl2 - S->ai_note) : strlen(S->ai_note);
-                if (n >= sizeof l1) n = sizeof l1 - 1;
-                memcpy(l1, S->ai_note, n); l1[n] = '\0';
-                draw_text_center(S->about, 160, UPD_BOX.y + 12, 0.62f, COL_YELLOW);
-                draw_text_center(l1, 160, UPD_BOX.y + 50, 0.5f, COL_WHITE);
-                if (nl2) draw_text_center(nl2 + 1, 160, UPD_BOX.y + 72, 0.5f, COL_WHITE);
+            draw_window(UPD_BOX);
+            if (note_dialog == NOTE_AI) {
+                draw_text_center(S->ai_title, 160, UPD_BOX.y + 12, 0.62f, COL_YELLOW);
+                draw_lines_center(S->ai_note, 160, UPD_BOX.y + 50, 0.5f, 22, COL_WHITE);
+            } else if (note_dialog == NOTE_NAMES) {
+                draw_text_center(S->name_rules_title, 160, UPD_BOX.y + 8, 0.56f, COL_YELLOW);
+                draw_text_center("/  \\  :  *  ?  \"  <  >  |", 160, UPD_BOX.y + 32, 0.6f, COL_WHITE);
+                draw_lines_center(S->name_rules, 160, UPD_BOX.y + 60, 0.45f, 18, COL_GRAY);
             } else {
-                draw_text_center(EX_NAMES[note_dialog], 160, UPD_BOX.y + 12, 0.62f, COL_YELLOW);
-                draw_text_center(S->regions_label, 160, UPD_BOX.y + 44, 0.5f, COL_GRAY);
-                draw_text_center(EX_REGIONS[note_dialog], 160, UPD_BOX.y + 66, 0.7f, COL_WHITE);
+                char rg[96];
+                snprintf(rg, sizeof rg, "%s: %s", S->regions_label, EX_REGIONS[note_dialog]);
+                draw_text_center(EX_NAMES[note_dialog], 160, UPD_BOX.y + 6, 0.6f, COL_YELLOW);
+                draw_text_center(rg, 160, UPD_BOX.y + 30, 0.5f, COL_WHITE);
+                draw_lines_center(S->ex_note, 160, UPD_BOX.y + 52, 0.45f, 16, COL_GRAY);
             }
             draw_button(DLG_OK, S->ok, "", true, false, true, true);
         }
@@ -3416,6 +3981,9 @@ int main(int argc, char **argv) {
     if (g_chars)  C2D_SpriteSheetFree(g_chars);
     if (g_lens)   C2D_SpriteSheetFree(g_lens);
     if (g_back)   C2D_SpriteSheetFree(g_back);
+    if (g_spanner) C2D_SpriteSheetFree(g_spanner);
+    if (g_parts)  C2D_SpriteSheetFree(g_parts);
+    if (g_window) C2D_SpriteSheetFree(g_window);
     C2D_TextBufDelete(g_buf);
     C2D_FontFree(g_font);
     C2D_Fini();
