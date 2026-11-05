@@ -1,0 +1,4 @@
+--atlas -f rgba8888 -z auto
+seek_knob.png
+slot_v.png
+slot_h.png
