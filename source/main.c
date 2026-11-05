@@ -1,4 +1,4 @@
-// More！CTGP-7 Manager Ver.1.2.4 - character folder manager for More!CTGP-7
+// More！CTGP-7 Manager Ver.1.2.5 - character folder manager for More!CTGP-7
 // Target: sdmc:/CTGP-7/MyStuff/Characters{1,2,3}
 // The folder named "Characters" (no number) is the active one.
 // No state file for folders: the active slot is detected from which folders exist.
@@ -25,7 +25,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
-#define APP_VERSION "Ver.1.2.4"
+#define APP_VERSION "Ver.1.2.5"
 #define APP_NAME_1  "More！CTGP-7"
 #define APP_NAME_2  "Manager"          // used only if the logo image fails to load
 #define APP_AUTHOR  "yk"
@@ -166,6 +166,8 @@ typedef struct {
     const char *bg_default;
     const char *random_btn;
     const char *ai_title;
+    const char *rainbow_btn;
+    const char *rainbow_on;
 } Strings;
 
 static const Strings STR_EN = {
@@ -273,6 +275,8 @@ static const Strings STR_EN = {
     "Default color",
     "Random",
     "Notice",
+    "Rainbow",
+    "Rainbow is on",
 };
 
 static const Strings STR_JA = {
@@ -380,6 +384,8 @@ static const Strings STR_JA = {
     "既定の色",
     "ランダム",
     "注意",
+    "レインボー",
+    "レインボー中",
 };
 
 // ------------------------------------------------------------ config
@@ -395,6 +401,7 @@ typedef struct {
     int bgm;                      // background music (0/1)
     int clock24;                  // 1 = 24-hour clock, 0 = 12-hour
     int bg_hue;                   // background color: hue 0-359, -1 = default
+    int bg_rainbow;               // background color loops through all hues (0/1)
 } Config;
 
 static void config_defaults(Config *c) {
@@ -407,6 +414,7 @@ static void config_defaults(Config *c) {
     c->bgm = 1;
     c->clock24 = 1;
     c->bg_hue = -1;
+    c->bg_rainbow = 0;
     snprintf(c->pack_url, sizeof c->pack_url, "%s", PACK_URL_DEFAULT);
 }
 
@@ -440,6 +448,7 @@ static void config_load(Config *c) {
         else if (!strcmp(key, "bgm")) c->bgm = v ? 1 : 0;
         else if (!strcmp(key, "clock24")) c->clock24 = v ? 1 : 0;
         else if (!strcmp(key, "bg_hue") && v >= -1 && v < 360) c->bg_hue = v;
+        else if (!strcmp(key, "bg_rainbow")) c->bg_rainbow = v ? 1 : 0;
     }
     fclose(f);
 }
@@ -449,8 +458,8 @@ static void config_save(const Config *c) {
     mkdir(CFG_DIR, 0777);
     FILE *f = fopen(CFG_PATH, "w");
     if (!f) return;
-    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\ncheck_update=%d\ndark=%d\nsfx=%d\nbgm=%d\nclock24=%d\nbg_hue=%d\n",
-            c->lang, c->confirm, c->exit_after, c->check_update, c->dark, c->sfx, c->bgm, c->clock24, c->bg_hue);
+    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\ncheck_update=%d\ndark=%d\nsfx=%d\nbgm=%d\nclock24=%d\nbg_hue=%d\nbg_rainbow=%d\n",
+            c->lang, c->confirm, c->exit_after, c->check_update, c->dark, c->sfx, c->bgm, c->clock24, c->bg_hue, c->bg_rainbow);
     if (strcmp(c->pack_url, PACK_URL_DEFAULT) != 0)     // only persist a custom URL
         fprintf(f, "pack_url=%s\n", c->pack_url);
     fclose(f);
@@ -1134,7 +1143,7 @@ static void ex_fetch_versions(void) {
 
 // SE_BGM is the background music; it uses the same loader on its own DSP channel.
 enum { SE_OK = 0, SE_CANCEL, SE_DECIDE, SE_CURSOR, SE_DLG_OPEN, SE_DLG_CLOSE, SE_SLOT,
-       SE_ATTENTION, SE_FOUND, SE_BUSY, SE_SCROLL, SE_COMPLETE, SE_ENGINE_IDLE, SE_ENGINE_GO, SE_WIN_YES, SE_WIN_NO, SE_BGM, SE_COUNT };
+       SE_ATTENTION, SE_FOUND, SE_BUSY, SE_SCROLL, SE_COMPLETE, SE_ENGINE_IDLE, SE_ENGINE_GO, SE_WIN_YES, SE_WIN_NO, SE_ROLL, SE_ROLLPASS, SE_BGM, SE_COUNT };
 
 #define BGM_GAP_MS 3000   // silence between BGM loops
 
@@ -1155,6 +1164,8 @@ static const char *SE_FILES[SE_COUNT] = {
     "romfs:/sound/SE_SYS_RACE_GO_ENGINE.wav",      // CTGP-7 launches
     "romfs:/sound/SE_RC_PAUSE_OFF.wav",            // window: OK / Yes / Update
     "romfs:/sound/SE_RC_PAUSE_ON.wav",             // window: B / No / Later
+    "romfs:/sound/SE_SYS_SLOT_ROLLING.wav",        // while a seek bar is held
+    "romfs:/sound/SE_SYS_SLOT_ROLLPASS.wav",       // a seek bar reached its end
     "romfs:/sound/SE_SYS_WIFI_MII_CUPSULE_MII_MOVE.wav",
 };
 
@@ -1236,12 +1247,42 @@ static bool sfx_load(int ch, const char *path) {
     return true;
 }
 
+// SE_SYS_SLOT_ROLLING: plays from the start once, then the second half loops. The end of the
+// loop is cross-faded into what comes before its start, so the two ends meet without a click.
+#define ROLL_LOOP_START 22231        // samples
+#define ROLL_LOOP_END   35067
+#define ROLL_FADE       1200
+
+static ndspWaveBuf g_roll_loop;
+static bool g_roll_ok = false;
+
+static void roll_setup(void) {
+    Sfx *r = &g_se[SE_ROLL];
+    if (!r->ok || r->wb.nsamples < ROLL_LOOP_END) return;     // not the expected file: plays once
+    s16 *d = (s16 *)r->data;                                  // 16-bit stereo
+    for (int i = 0; i < ROLL_FADE; i++) {
+        float t = (float)i / ROLL_FADE;
+        s16 *to = d + (ROLL_LOOP_END - ROLL_FADE + i) * 2, *from = d + (ROLL_LOOP_START - ROLL_FADE + i) * 2;
+        to[0] = (s16)(to[0] * (1 - t) + from[0] * t);
+        to[1] = (s16)(to[1] * (1 - t) + from[1] * t);
+    }
+    DSP_FlushDataCache(r->data, ROLL_LOOP_END * 4);
+    memset(&g_roll_loop, 0, sizeof g_roll_loop);
+    g_roll_loop.data_vaddr = d + ROLL_LOOP_START * 2;
+    g_roll_loop.nsamples = ROLL_LOOP_END - ROLL_LOOP_START;
+    g_roll_loop.looping = true;
+    g_roll_loop.status = NDSP_WBUF_DONE;
+    r->wb.nsamples = ROLL_LOOP_START;                         // the first part ends where the loop begins
+    g_roll_ok = true;
+}
+
 static void sfx_init(void) {
     if (R_FAILED(ndspInit())) return;              // no dspfirm.cdc etc.
     g_ndsp = true;
     ndspSetOutputMode(NDSP_OUTPUT_STEREO);
     for (int i = 0; i < SE_COUNT; i++) sfx_load(i, SE_FILES[i]);
     g_se[SE_ENGINE_IDLE].wb.looping = true;
+    roll_setup();
 }
 
 static void sfx_play(int id) {
@@ -1249,6 +1290,13 @@ static void sfx_play(int id) {
     ndspChnWaveBufClear(id);                        // restart if still playing
     g_se[id].wb.status = NDSP_WBUF_DONE;
     ndspChnWaveBufAdd(id, &g_se[id].wb);
+}
+
+static void roll_start(void) {
+    sfx_play(SE_ROLL);
+    if (!g_ndsp || !g_sfx_on || !g_roll_ok) return;
+    g_roll_loop.status = NDSP_WBUF_DONE;
+    ndspChnWaveBufAdd(SE_ROLL, &g_roll_loop);
 }
 
 static bool sfx_playing(int id) {
@@ -1540,6 +1588,10 @@ static C2D_SpriteSheet g_bowser = NULL;   // Bowser kart silhouette
 static C2D_SpriteSheet g_lakitu = NULL;   // Lakitu silhouette (fishing, floats above the others)
 static C2D_SpriteSheet g_chars  = NULL;   // 0: Mario (active button), 1: Mario & Luigi (launch button)
 static C2D_SpriteSheet g_spanner = NULL;  // silver spanner (custom folders)
+static C2D_SpriteSheet g_seek   = NULL;   // seek bar: 0 knob, 1 vertical slot, 2 horizontal slot
+static C2D_SpriteSheet g_icons  = NULL;   // small marks: 0 update, 1 save
+static C2D_SpriteSheet g_trash  = NULL;   // trash can mark
+static C2D_SpriteSheet g_hands  = NULL;   // seek bar hand: 0 pointing, 1 fist
 static C2D_SpriteSheet g_window = NULL;   // window backgrounds: 0 large (UPD_BOX), 1 small (DLG_BOX)
 static C2D_SpriteSheet g_parts  = NULL;   // bottom-screen square particles: 0 big, 1 small (white, tinted)
 static C2D_SpriteSheet g_back   = NULL;   // back tab (arrow + B) for the bottom-left corner
@@ -1589,6 +1641,7 @@ static void set_bg_dark(bool dark) {
     invert_sheet(g_lakitu);
     invert_sheet(g_shell);
     invert_sheet(g_window);
+    invert_sheet(g_hands);
     g_bg_inverted = dark;
 }
 
@@ -1608,7 +1661,7 @@ static bool g_bg_tinted = false;
 static void bg_tint_update(int hue, bool dark) {
     g_bg_tinted = hue >= 0;
     if (g_bg_tinted)
-        C2D_PlainImageTint(&g_bg_tint, hsv_color(hue, dark ? 0.6f : 0.5f, dark ? 0.34f : 1.0f, 0xFF), dark ? 0.5f : 0.34f);
+        C2D_PlainImageTint(&g_bg_tint, hsv_color(hue, dark ? 0.7f : 0.62f, dark ? 0.42f : 1.0f, 0xFF), dark ? 0.55f : 0.4f);
 }
 
 static const C2D_ImageTint *bg_tint(void) { return g_bg_tinted ? &g_bg_tint : NULL; }
@@ -2075,6 +2128,42 @@ static bool btn_pressed(Rect r, bool sel, bool enabled) {
 
 #define PRESS_DY 2.0f      // how far a pressed button sinks
 
+// ---- MK7 seek bar, cut from the game's picture ----
+// The pictures are stretched only in a plain middle part, so both ends keep their shape and the
+// arrows of the knob move to its ends when it gets longer.
+#define KNOB_TOP 8                  // knob: rows with the up arrow; one plain row; the rest has the down arrow
+#define SLOT_CAP 12                 // slot: end piece, then one plain row
+
+static void draw_slot_v(float x, float y, float h) {
+    if (!g_seek) return;
+    C2D_Image im = C2D_SpriteSheetGetImage(g_seek, 1);
+    float W = im.subtex->width, H = im.subtex->height;
+    draw_img_part(im, 0, W, 0, SLOT_CAP, x, y, 1, 1, NULL);
+    draw_img_part(im, 0, W, SLOT_CAP, SLOT_CAP + 1, x, y + SLOT_CAP, 1, h - (H - 1), NULL);
+    draw_img_part(im, 0, W, SLOT_CAP + 1, H, x, y + h - (H - SLOT_CAP - 1), 1, 1, NULL);
+}
+
+static void draw_slot_h(float x, float y, float w) {
+    if (!g_seek) return;
+    C2D_Image im = C2D_SpriteSheetGetImage(g_seek, 2);
+    float W = im.subtex->width, H = im.subtex->height;
+    draw_img_part(im, 0, SLOT_CAP, 0, H, x, y, 1, 1, NULL);
+    draw_img_part(im, SLOT_CAP, SLOT_CAP + 1, 0, H, x + SLOT_CAP, y, w - (W - 1), 1, NULL);
+    draw_img_part(im, SLOT_CAP + 1, W, 0, H, x + w - (W - SLOT_CAP - 1), y, 1, 1, NULL);
+}
+
+static void draw_seek_knob(float x, float y, float h, bool held) {
+    if (!g_seek) return;
+    C2D_Image im = C2D_SpriteSheetGetImage(g_seek, 0);
+    float W = im.subtex->width, H = im.subtex->height;
+    C2D_ImageTint t;
+    C2D_PlainImageTint(&t, C2D_Color32(0xFF, 0xD8, 0x30, 0xFF), 0.4f);
+    const C2D_ImageTint *tp = held ? &t : NULL;
+    draw_img_part(im, 0, W, 0, KNOB_TOP, x, y, 1, 1, tp);
+    draw_img_part(im, 0, W, KNOB_TOP, KNOB_TOP + 1, x, y + KNOB_TOP, 1, h - (H - 1), tp);
+    draw_img_part(im, 0, W, KNOB_TOP + 1, H, x, y + h - (H - KNOB_TOP - 1), 1, 1, tp);
+}
+
 // 1 px frame without corner pixels (nothing overlaps, so see-through colors stay even).
 static void draw_frame(float x, float y, float w, float h, u32 c) {
     C2D_DrawRectSolid(x + 1, y, 0.5f, w - 2, 1, c);
@@ -2294,6 +2383,18 @@ static void draw_button(Rect r, const char *label, const char *value,
     }
     g_shadow = saved;
     g_text_outline = false;
+}
+
+// Mark to the left of a centered button label; the label itself does not move.
+static void draw_label_mark(C2D_SpriteSheet sheet, int idx, Rect r, const char *label, bool sel, float k) {
+    if (!sheet) return;
+    C2D_Image im = C2D_SpriteSheetGetImage(sheet, idx);
+    float tw, th;
+    text_size(label, g_btn_sc, &tw, &th);
+    float mw = im.subtex->width * k, mh = im.subtex->height * k;
+    C2D_DrawImageAt(im, r.x + r.w / 2 - tw / 2 - mw - 5,
+                    r.y + (r.h - mh) / 2 + (btn_pressed(r, sel, true) ? PRESS_DY : 0),
+                    0.5f, NULL, k, k);
 }
 
 // Back button: tab with the arrow and B in the bottom-left corner.
@@ -2696,12 +2797,12 @@ static const Rect MAIN_R[MAIN_N] = {
     {36, 142, 248, 42},   // Characters3
     {60, 200, 200, 32},   // Launch CTGP-7 (separated)
     {283,  4,  32, 32},   // Settings (round gear, top right)
-    {  5,  4,  32, 32},   // Extra (round "Ex", top left)
-    { 14, 202, 32, 32},   // Custom folders (round, bottom left)
+    { 14, 202, 32, 32},   // Extra (round "Ex", bottom left)
+    {  5,  4,  32, 32},   // Custom folders (round, top left)
 };
 static const Rect GEAR_HIT = {272, 0, 48, 44};   // larger touch area for the gear
-static const Rect EX_HIT   = {  0, 0, 48, 44};
-static const Rect FOLDER_HIT = { 0, 196, 56, 44};
+static const Rect EX_HIT   = { 0, 196, 56, 44};
+static const Rect FOLDER_HIT = { 0, 0, 48, 44};
 
 // Custom folders screen
 static const Rect FOLD_NAME_R[SLOTS] = { {10, 40, 150, 34}, {10, 88, 150, 34}, {10, 136, 150, 34} };
@@ -2711,11 +2812,16 @@ static const Rect FOLD_SAVE  = { 90, 205, 130, 30};   // also used by the backgr
 #define BG_BAR_W 260.0f
 #define BG_BAR_Y 60.0f
 #define BG_BAR_H 26.0f
-#define BG_TRI_Y (BG_BAR_Y + BG_BAR_H + 3)
-#define BG_SEEK_Y (BG_TRI_Y + 20)
+#define BG_SEEK_Y (BG_BAR_Y + BG_BAR_H + 23)
+#define BG_HAND_TIP 8.0f                              // x of the fingertip in hand_point.png
 static const Rect BG_TOUCH = {16, 54, 288, 76};       // touch area of the bar and the seek bar
-static const Rect BG_RANDOM = {100, 136, 120, 30};
-#define BG_RANDOM_MAX 329                             // the red at the right end stays out, or red would win
+static const Rect BG_RANDOM = {44, 136, 112, 30};
+static const Rect BG_RAINBOW = {164, 136, 112, 30};
+#define RAINBOW_MS   30000                            // one full loop
+
+static int rainbow_hue_now(void) {
+    return (int)((osGetTime() % RAINBOW_MS) * 360 / RAINBOW_MS);
+}
 #define FOLD_MARIO_H 28.0f                             // drawn height of Mario
 #define FOLD_MARIO_W 36.0f                             // drawn width of Mario
 
@@ -2818,6 +2924,10 @@ int main(int argc, char **argv) {
     g_spanner = C2D_SpriteSheetLoad("romfs:/gfx/spanner.t3x");
     g_parts  = C2D_SpriteSheetLoad("romfs:/gfx/particles.t3x");
     g_window = C2D_SpriteSheetLoad("romfs:/gfx/window.t3x");
+    g_hands  = C2D_SpriteSheetLoad("romfs:/gfx/hands.t3x");
+    g_trash  = C2D_SpriteSheetLoad("romfs:/gfx/trash.t3x");
+    g_icons  = C2D_SpriteSheetLoad("romfs:/gfx/icons.t3x");
+    g_seek   = C2D_SpriteSheetLoad("romfs:/gfx/seek.t3x");
 
     bool sys_ja = false;
     u8 lang = CFG_LANGUAGE_EN;
@@ -2848,6 +2958,7 @@ int main(int argc, char **argv) {
     int frame_no = 0;
     bool manual_check = false;             // "Check for updates" pressed (busy sound)
     int slide_screen = -1;                 // screen whose slide-in has started
+    bool was_rolling = false, was_at_end = false;  // previous frame: seek bar held / at its end
     bool was_idle = false;                 // previous frame: engine idling sound on
     bool was_upd_done = false;             // previous frame: update finished
     int was_ex_busy = -1;                  // previous frame: Extra item being downloaded
@@ -2874,7 +2985,8 @@ int main(int argc, char **argv) {
     int ex_cursor = 0;                     // extra screen: 0 MK7 DL, 1 ACNL DL, 2 back, 3 MK7 note, 4 ACNL note
     int fold_cursor = 0;                   // custom folders: 0-2 rename, 3 save, 4 reset, 5 back, 6 "!"
     char ed_names[SLOTS][NAME_BUF];        // names being edited (saved only by "Save changes")
-    int bg_cursor = 0;                     // background color: 0 seek bar, 1 save, 2 reset, 3 back, 4 random
+    int bg_cursor = 0;                     // background color: 0 seek bar, 1 save, 2 reset, 3 back, 4 random, 5 rainbow
+    bool ed_rainbow = false;               // rainbow while choosing
     int ed_hue = -1;                       // hue being chosen (shown live, saved only by "Save")
     bool bg_saved = false, t_seek = false; // show "Saved." / seek bar is being dragged
     bool mario_talk = false;               // custom folders: Mario's bubble, touch only
@@ -3049,17 +3161,20 @@ int main(int argc, char **argv) {
                 sfx_play(do_perform ? SE_WIN_YES : SE_WIN_NO);
         } else if (screen == SCR_MAIN) {
             int act = -1;
-            // order: Ex(5) -> 1 -> 2 -> 3 -> Launch -> Folders(6) -> Gear(4) -> Ex ...; left/right on the icons
-            static const int order[MAIN_N] = { 5, 0, 1, 2, 3, 6, 4 };
+            // order: Folders(6) -> 1 -> 2 -> 3 -> Launch -> Ex(5) -> Gear(4) -> Folders ...; left/right on the icons
+            static const int order[MAIN_N] = { 6, 0, 1, 2, 3, 5, 4 };
             int pos = 0;
             for (int i = 0; i < MAIN_N; i++) if (order[i] == cursor) pos = i;
             if (down & KEY_UP)   cursor = order[(pos + MAIN_N - 1) % MAIN_N];
             if (down & KEY_DOWN) cursor = order[(pos + 1) % MAIN_N];
-            if ((down & KEY_LEFT) && cursor == 4) cursor = 5;
-            if ((down & KEY_RIGHT) && cursor == 5) cursor = 4;
-            if ((down & KEY_LEFT) && cursor == 3) cursor = 6;
-            if ((down & KEY_RIGHT) && cursor == 6) cursor = 3;
+            if ((down & KEY_LEFT) && cursor == 4) cursor = 6;
+            if ((down & KEY_RIGHT) && cursor == 6) cursor = 4;
+            if ((down & KEY_LEFT) && cursor == 3) cursor = 5;
+            if ((down & KEY_RIGHT) && cursor == 5) cursor = 3;
             if (down & KEY_A) act = cursor;
+            // shoulder buttons: first press moves the cursor to the icon, the next one opens it
+            if (down & KEY_R) { if (cursor == 4) act = 4; else cursor = 4; }
+            if (down & KEY_L) { if (cursor == 6) act = 6; else cursor = 6; }
             if (tap) {
                 for (int i = 0; i < MAIN_N; i++) {
                     Rect hr = i == 4 ? GEAR_HIT : (i == 5 ? EX_HIT : (i == 6 ? FOLDER_HIT : MAIN_R[i]));
@@ -3086,15 +3201,19 @@ int main(int argc, char **argv) {
                 memcpy(ed_names, g_names, sizeof ed_names);
             }
         } else if (screen == SCR_BGCOLOR) {
-            if (down & KEY_UP)   bg_cursor = bg_cursor == 0 ? 1 : bg_cursor == 4 ? 0 : 4;
-            if (down & KEY_DOWN) bg_cursor = bg_cursor == 0 ? 4 : bg_cursor == 4 ? 1 : 0;
+            bool mid_row = bg_cursor == 4 || bg_cursor == 5;
+            if (down & KEY_UP)   bg_cursor = bg_cursor == 0 ? 1 : mid_row ? 0 : 4;
+            if (down & KEY_DOWN) bg_cursor = bg_cursor == 0 ? 4 : mid_row ? 1 : 0;
             if (bg_cursor == 0 && (held & (KEY_LEFT | KEY_RIGHT))) {       // hold to keep sliding
                 int h = (ed_hue < 0 ? 0 : ed_hue) + ((held & KEY_RIGHT) ? 1 : -1);
                 ed_hue = h < 0 ? 0 : h > 359 ? 359 : h;
+                ed_rainbow = false;
                 bg_saved = false;
             } else {
                 if (down & KEY_LEFT)  { if (bg_cursor == 1) bg_cursor = 3; else if (bg_cursor == 2) bg_cursor = 1; }
                 if (down & KEY_RIGHT) { if (bg_cursor == 3) bg_cursor = 1; else if (bg_cursor == 1) bg_cursor = 2; }
+                if (down & KEY_LEFT)  { if (bg_cursor == 5) bg_cursor = 4; }
+                if (down & KEY_RIGHT) { if (bg_cursor == 4) bg_cursor = 5; }
             }
             int act = -1;
             if (down & KEY_A) act = bg_cursor;
@@ -3105,26 +3224,35 @@ int main(int argc, char **argv) {
                 else if (hit(FOLD_RESET, tp)) act = 2;
                 else if (hit(ABOUT_BACK, tp)) act = 3;
                 else if (hit(BG_RANDOM, tp)) act = 4;
+                else if (hit(BG_RAINBOW, tp)) act = 5;
                 if (act >= 0) bg_cursor = act;
             }
             if (t_seek && (held & KEY_TOUCH)) {
                 float f = ((float)tp.px - BG_BAR_X) / BG_BAR_W;
                 ed_hue = (int)((f < 0 ? 0 : f > 1 ? 1 : f) * 359);
+                ed_rainbow = false;
                 bg_saved = false;
             }
             if (up & KEY_TOUCH) t_seek = false;
             if (act == 1) {
                 ok_sfx = true;
                 cfg.bg_hue = ed_hue;
+                cfg.bg_rainbow = ed_rainbow;
                 config_save(&cfg);
                 bg_saved = true;
             } else if (act == 2) {
                 ok_sfx = true;
                 ed_hue = -1;
+                ed_rainbow = false;
                 bg_saved = false;
             } else if (act == 4) {
                 ok_sfx = true;
-                ed_hue = rand_range(0, BG_RANDOM_MAX);
+                ed_hue = rand_range(0, 359);
+                ed_rainbow = false;
+                bg_saved = false;
+            } else if (act == 5) {
+                ok_sfx = true;
+                ed_rainbow = true;
                 bg_saved = false;
             } else if (act == 3) screen = SCR_SETTINGS;
         } else if (screen == SCR_FOLDERS) {
@@ -3305,6 +3433,15 @@ int main(int argc, char **argv) {
             if (scroll < 0) scroll = 0;
             if (scroll > max_scroll) scroll = max_scroll;
 
+            // while the list is dragged or scrolled the cursor stays on a row that can be seen
+            if ((t_mode == 1 && t_drag) || t_mode == 2) {
+                int first = (scroll + ROW_PITCH - 1) / ROW_PITCH;
+                int last = (scroll + LIST_H - ROW_H) / ROW_PITCH;
+                if (set_cursor < first) set_cursor = first;
+                else if (set_cursor < LIST_N && set_cursor > last) set_cursor = last;
+                pv_set = set_cursor;                     // no cursor sound: the seek bar has its own
+            }
+
             if (act >= 0 && !(down & KEY_B)) {
                 bool changed = false;
                 bool lr = (down & (KEY_LEFT | KEY_RIGHT)) != 0;
@@ -3325,6 +3462,7 @@ int main(int argc, char **argv) {
                         screen = SCR_BGCOLOR;
                         bg_cursor = 0;
                         ed_hue = cfg.bg_hue;
+                        ed_rainbow = cfg.bg_rainbow != 0;
                         bg_saved = false;
                         t_seek = false;
                     }
@@ -3449,6 +3587,17 @@ int main(int argc, char **argv) {
             else if (!idle_now && was_idle) sfx_stop(SE_ENGINE_IDLE);
             was_idle = idle_now;
 
+            // seek bars: only while moved by hand, so never from the rainbow
+            bool rolling = (screen == SCR_BGCOLOR && (t_seek || (bg_cursor == 0 && (held & (KEY_LEFT | KEY_RIGHT))))) ||
+                           (screen == SCR_SETTINGS && t_mode == 2 && (held & KEY_TOUCH));
+            bool at_end = screen == SCR_BGCOLOR ? (ed_hue == 0 || ed_hue == 359) :
+                          screen == SCR_SETTINGS ? (scroll == 0 || scroll == LIST_CONTENT - LIST_H) : false;
+            if (rolling && !was_rolling) roll_start();
+            else if (!rolling && was_rolling) sfx_stop(SE_ROLL);
+            if (rolling && at_end && !was_at_end) sfx_play(SE_ROLLPASS);
+            was_rolling = rolling;
+            was_at_end = at_end;
+
             // busy sound: loops back-to-back while checking manually / updating / downloading Extra files
             bool busy_now = upd_busy() || ex_busy() || (manual_check && g_app.state == CHK_RUNNING);
             u64 t = osGetTime();
@@ -3516,7 +3665,11 @@ int main(int argc, char **argv) {
             sfx_play(SE_SCROLL);
         }
 
-        bg_tint_update(screen == SCR_BGCOLOR ? ed_hue : cfg.bg_hue, cfg.dark);   // live while choosing
+        {                                              // live while choosing; the knob follows the rainbow
+            int rainbow_hue = rainbow_hue_now();
+            if (screen == SCR_BGCOLOR && ed_rainbow) ed_hue = rainbow_hue;
+            bg_tint_update(screen == SCR_BGCOLOR ? ed_hue : cfg.bg_rainbow ? rainbow_hue : cfg.bg_hue, cfg.dark);
+        }
 
         // ---------- draw ----------
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
@@ -3583,15 +3736,18 @@ int main(int argc, char **argv) {
             g_btn_reserve = 0;
             g_btn_glass = true;
             draw_gear_button(slid(MAIN_R[4], 0), GEAR_HIT, !dialog && cursor == 4);
-            draw_ex_button(slid(MAIN_R[5], 0), EX_HIT, !dialog && cursor == 5);
-            draw_folder_button(slid(MAIN_R[6], 5), FOLDER_HIT, !dialog && cursor == 6);
+            draw_ex_button(slid(MAIN_R[5], 5), EX_HIT, !dialog && cursor == 5);
+            draw_folder_button(slid(MAIN_R[6], 0), FOLDER_HIT, !dialog && cursor == 6);
+            // L and R marks from the system font (U+E004, U+E005), at the inner top corner of their icons
+            draw_text("\xEE\x80\x84", MAIN_R[6].x + MAIN_R[6].w - 2 + slide_dx(0), MAIN_R[6].y - 5, 0.42f, COL_WHITE);
+            draw_text_right("\xEE\x80\x85", MAIN_R[4].x + 2 + slide_dx(0), MAIN_R[4].y - 5, 0.42f, COL_WHITE);
             // name bubbles (only for the icon under the cursor)
             if (!dialog && cursor == 4)
                 draw_tooltip(MAIN_R[4].x + slide_dx(0) + MAIN_R[4].w / 2, MAIN_R[4].y + MAIN_R[4].h + 3, S->settings, false);
             if (!dialog && cursor == 5)
-                draw_tooltip(MAIN_R[5].x + slide_dx(0) + MAIN_R[5].w / 2, MAIN_R[5].y + MAIN_R[5].h + 3, S->extra_tip, false);
+                draw_tooltip(MAIN_R[5].x + slide_dx(5) + MAIN_R[5].w / 2, MAIN_R[5].y - 3, S->extra_tip, true);
             if (!dialog && cursor == 6)
-                draw_tooltip(MAIN_R[6].x + slide_dx(5) + MAIN_R[6].w / 2, MAIN_R[6].y - 3, S->rename_tip, true);
+                draw_tooltip(MAIN_R[6].x + slide_dx(0) + MAIN_R[6].w / 2, MAIN_R[6].y + MAIN_R[6].h + 3, S->rename_tip, false);
         } else if (screen == SCR_BGCOLOR) {
             draw_text_center(S->set_bgcolor, 160, 8, 0.65f, COL_YELLOW);
             float pos = BG_BAR_X + (ed_hue < 0 ? 0 : ed_hue) / 359.0f * BG_BAR_W;
@@ -3599,30 +3755,34 @@ int main(int argc, char **argv) {
                 float dx = slide_dx(0), step = BG_BAR_W / 36.0f;
                 draw_frame(BG_BAR_X + dx - 1, BG_BAR_Y - 1, BG_BAR_W + 2, BG_BAR_H + 2, C2D_Color32(0x30, 0x34, 0x3C, 0xFF));
                 for (int i = 0; i < 36; i++) {
-                    u32 c0 = hsv_color(i * 10, cfg.dark ? 0.6f : 0.5f, cfg.dark ? 0.6f : 1.0f, 0xFF);
-                    u32 c1 = hsv_color((i + 1) % 36 * 10, cfg.dark ? 0.6f : 0.5f, cfg.dark ? 0.6f : 1.0f, 0xFF);
+                    u32 c0 = hsv_color(i * 10, cfg.dark ? 0.7f : 0.62f, cfg.dark ? 0.7f : 1.0f, 0xFF);
+                    u32 c1 = hsv_color((i + 1) % 36 * 10, cfg.dark ? 0.7f : 0.62f, cfg.dark ? 0.7f : 1.0f, 0xFF);
                     C2D_DrawRectangle(BG_BAR_X + dx + i * step, BG_BAR_Y, 0.5f, step, BG_BAR_H, c0, c1, c0, c1);
                 }
             }
-            {                                           // triangle marker, moves with the knob
-                float tx = pos + slide_dx(1);
-                C2D_DrawTriangle(tx, BG_TRI_Y, COL_WHITE, tx - 7, BG_TRI_Y + 11, COL_WHITE, tx + 7, BG_TRI_Y + 11, COL_WHITE, 0.5f);
-            }
-            {                                           // seek bar
-                float dx = slide_dx(2), kx = pos + dx, ky = BG_SEEK_Y + 3;
+            {                                           // seek bar; the hand is both knob and marker
+                float dx = slide_dx(2);
                 bool sel = !dialog && bg_cursor == 0;
-                C2D_DrawRectSolid(BG_BAR_X + dx, BG_SEEK_Y, 0.5f, BG_BAR_W, 6, C2D_Color32(0x30, 0x34, 0x3C, 0xFF));
-                C2D_DrawRectSolid(BG_BAR_X + dx + 1, BG_SEEK_Y + 1, 0.5f, BG_BAR_W - 2, 4, C2D_Color32(0xC8, 0xCC, 0xD4, 0xFF));
-                if (sel) C2D_DrawCircleSolid(kx, ky, 0.5f, 12, sel_color());
-                C2D_DrawCircleSolid(kx, ky, 0.5f, 10, C2D_Color32(0x30, 0x34, 0x3C, 0xFF));
-                C2D_DrawCircle(kx, ky, 0.5f, 9, C2D_Color32(0xFF, 0xFF, 0xFF, 0xFF), C2D_Color32(0xFF, 0xFF, 0xFF, 0xFF),
-                               C2D_Color32(0xA8, 0xAE, 0xBA, 0xFF), C2D_Color32(0xA8, 0xAE, 0xBA, 0xFF));
+                draw_slot_h(BG_BAR_X + dx, BG_SEEK_Y - 1, BG_BAR_W);
+                if (g_hands) {
+                    bool fist = ed_hue < 0;             // default color: the fist points at nothing
+                    C2D_Image hi = C2D_SpriteSheetGetImage(g_hands, fist ? 1 : 0);
+                    C2D_ImageTint ht;
+                    C2D_PlainImageTint(&ht, sel_color(), 0.4f);
+                    float hx = pos + dx - (fist ? hi.subtex->width / 2.0f : BG_HAND_TIP);
+                    float hy = fist ? BG_SEEK_Y + 3 - hi.subtex->height / 2.0f : BG_BAR_Y + BG_BAR_H + 1;
+                    C2D_DrawImageAt(hi, hx, hy, 0.5f, sel ? &ht : NULL, 1.0f, 1.0f);
+                }
             }
             if (bg_saved) draw_text_center(S->saved_msg, 160, 176, 0.55f, COL_GREEN);
+            else if (ed_rainbow) draw_text_center(S->rainbow_on, 160, 176, 0.5f, COL_GRAY);
             else if (ed_hue < 0) draw_text_center(S->bg_default, 160, 176, 0.5f, COL_GRAY);
             g_btn_sc = 0.5f;
             draw_button(slid(BG_RANDOM, 3), S->random_btn, "", !dialog && bg_cursor == 4, false, true, true);
+            draw_button(slid(BG_RAINBOW, 3), S->rainbow_btn, "", !dialog && bg_cursor == 5, false, true, true);
             draw_button(slid(FOLD_SAVE, 4), S->save_btn, "", !dialog && bg_cursor == 1, false, true, true);
+            draw_label_mark(g_icons, 1, slid(FOLD_SAVE, 4), S->save_btn, !dialog && bg_cursor == 1,
+                            S == &STR_EN ? 0.72f : 1.0f);
             draw_button(slid(FOLD_RESET, 4), S->reset_btn, "", !dialog && bg_cursor == 2, false, true, true);
             g_btn_sc = 0.6f;
             draw_back_tab(slid(ABOUT_BACK, 4), !dialog && bg_cursor == 3, true);
@@ -3665,6 +3825,8 @@ int main(int argc, char **argv) {
             else if (fold_msg) draw_text_center(fold_msg == 2 ? S->name_bad : fold_msg == 3 ? S->name_dup : S->name_fail,
                                                 160, 178, 0.55f, COL_RED);
             draw_button(slid(FOLD_SAVE, 3), S->save_btn, "", !dialog && fold_cursor == 3, false, true, true);
+            draw_label_mark(g_icons, 1, slid(FOLD_SAVE, 3), S->save_btn, !dialog && fold_cursor == 3,
+                            S == &STR_EN ? 0.72f : 1.0f);   // the English label is longer
             draw_button(slid(FOLD_RESET, 3), S->reset_btn, "", !dialog && fold_cursor == 4, false, true, true);
             g_btn_sc = 0.6f;
             draw_back_tab(slid(ABOUT_BACK, 3), !dialog && fold_cursor == 5, true);
@@ -3847,6 +4009,8 @@ int main(int argc, char **argv) {
                 r = slid(r, i > first_row ? i - first_row : 0);
                 g_btn_reserve = toggles[i] ? SW_W + 10 : 0;
                 draw_button(r, labels[i], values[i], sel, false, true, centered[i]);
+                if (i == 9) draw_label_mark(g_icons, 0, r, labels[i], sel, 1.0f);    // app update
+                if (i == 10) draw_label_mark(g_trash, 0, r, labels[i], sel, 1.0f);   // reset settings
                 if (toggles[i]) draw_switch(r, sel, sw_anim[i], *toggles[i] != 0);
             }
             g_btn_reserve = 0;
@@ -3871,9 +4035,9 @@ int main(int argc, char **argv) {
 
             // scroll bar
             const int max_scroll = LIST_CONTENT - LIST_H;
-            C2D_DrawRectSolid(SB_X, LIST_Y, 0.5f, 8, LIST_H, C2D_Color32(0, 0, 0, 0x70));
+            draw_slot_v(SB_X, LIST_Y + 2, LIST_H - 4);
             float ty = LIST_Y + (float)(LIST_H - THUMB_H) * (max_scroll ? (float)scroll / max_scroll : 0.0f);
-            C2D_DrawRectSolid(SB_X, ty, 0.5f, 8, THUMB_H, t_mode == 2 ? BTN_VALUE : C2D_Color32(0xE8, 0xE8, 0xE8, 0xFF));
+            draw_seek_knob(SB_X - 6, ty, THUMB_H, t_mode == 2);
         }
 
         if (dialog) {
@@ -3984,6 +4148,10 @@ int main(int argc, char **argv) {
     if (g_spanner) C2D_SpriteSheetFree(g_spanner);
     if (g_parts)  C2D_SpriteSheetFree(g_parts);
     if (g_window) C2D_SpriteSheetFree(g_window);
+    if (g_hands)  C2D_SpriteSheetFree(g_hands);
+    if (g_trash)  C2D_SpriteSheetFree(g_trash);
+    if (g_icons)  C2D_SpriteSheetFree(g_icons);
+    if (g_seek)   C2D_SpriteSheetFree(g_seek);
     C2D_TextBufDelete(g_buf);
     C2D_FontFree(g_font);
     C2D_Fini();
