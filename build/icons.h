@@ -3,3 +3,4 @@
 
 #define icons_icon_update_idx 0
 #define icons_icon_save_idx 1
+#define icons_icon_download_idx 2

@@ -1,4 +1,4 @@
-// More！CTGP-7 Manager Ver.1.2.5 - character folder manager for More!CTGP-7
+// More！CTGP-7 Manager Ver.1.2.6 - character folder manager for More!CTGP-7
 // Target: sdmc:/CTGP-7/MyStuff/Characters{1,2,3}
 // The folder named "Characters" (no number) is the active one.
 // No state file for folders: the active slot is detected from which folders exist.
@@ -25,7 +25,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
-#define APP_VERSION "Ver.1.2.5"
+#define APP_VERSION "Ver.1.2.6"
 #define APP_NAME_1  "More！CTGP-7"
 #define APP_NAME_2  "Manager"          // used only if the logo image fails to load
 #define APP_AUTHOR  "yk"
@@ -102,6 +102,7 @@ typedef struct {
     const char *latest_label;
     const char *ok;
     const char *set_appupd;
+    const char *set_restart;
     const char *appupd_title;
     const char *check_btn;
     const char *checking;
@@ -111,6 +112,7 @@ typedef struct {
     const char *set_dark;
     const char *set_sfx;
     const char *set_bgm;
+    const char *set_led;
     const char *app_dlg_msg;
     const char *btn_update;
     const char *btn_later;
@@ -144,6 +146,7 @@ typedef struct {
     const char *ai_note;       // two lines
     const char *confirm_reset;
     const char *confirm_launch;
+    const char *confirm_restart;
     const char *notice_ctgp;
     const char *rename_tip;
     const char *custom_title;
@@ -168,6 +171,8 @@ typedef struct {
     const char *ai_title;
     const char *rainbow_btn;
     const char *rainbow_on;
+    const char *color_tip;
+    const char *color_title;     // "%s" = folder name
 } Strings;
 
 static const Strings STR_EN = {
@@ -211,6 +216,7 @@ static const Strings STR_EN = {
     "Latest",
     "OK",
     "App update",
+    "Restart app",
     "App Update",
     "Check for updates",
     "Checking...",
@@ -220,6 +226,7 @@ static const Strings STR_EN = {
     "Dark mode",
     "Sound effects",
     "BGM",
+    "Notification light",
     "An app update is available.",
     "Update",
     "Later",
@@ -253,6 +260,7 @@ static const Strings STR_EN = {
     "This project contains AI-generated content.\nClaude was used in its development.",
     "Reset all settings?",
     "Launch CTGP-7?",
+    "Restart the app?",
     "CTGP-7 is not installed.",
     "Rename folders",
     "Custom Folders",
@@ -277,6 +285,8 @@ static const Strings STR_EN = {
     "Notice",
     "Rainbow",
     "Rainbow is on",
+    "Change management color",
+    "Color of %s",
 };
 
 static const Strings STR_JA = {
@@ -320,6 +330,7 @@ static const Strings STR_JA = {
     "最新",
     "OK",
     "アプリの更新",
+    "アプリを再起動",
     "アプリの更新",
     "更新のチェック",
     "確認中...",
@@ -329,6 +340,7 @@ static const Strings STR_JA = {
     "ダークモード",
     "効果音",
     "BGM",
+    "お知らせランプ",
     "アプリのアップデートがあります。",
     "更新する",
     "あとで",
@@ -362,6 +374,7 @@ static const Strings STR_JA = {
     "このプロジェクトにはAI生成物が含まれます。\n開発にはClaudeが使用されています。",
     "設定を初期化しますか?",
     "CTGP-7を起動しますか?",
+    "アプリを再起動しますか?",
     "CTGP-7がインストールされていません。",
     "フォルダ名を変更",
     "カスタムフォルダ",
@@ -386,6 +399,8 @@ static const Strings STR_JA = {
     "注意",
     "レインボー",
     "レインボー中",
+    "管理色を変更",
+    "%s の管理色",
 };
 
 // ------------------------------------------------------------ config
@@ -399,6 +414,7 @@ typedef struct {
     int dark;                     // dark mode (0/1)
     int sfx;                      // sound effects (0/1)
     int bgm;                      // background music (0/1)
+    int led;                      // notification LED (0/1)
     int clock24;                  // 1 = 24-hour clock, 0 = 12-hour
     int bg_hue;                   // background color: hue 0-359, -1 = default
     int bg_rainbow;               // background color loops through all hues (0/1)
@@ -412,6 +428,7 @@ static void config_defaults(Config *c) {
     c->dark = 0;
     c->sfx = 1;
     c->bgm = 1;
+    c->led = 1;
     c->clock24 = 1;
     c->bg_hue = -1;
     c->bg_rainbow = 0;
@@ -446,6 +463,7 @@ static void config_load(Config *c) {
         else if (!strcmp(key, "dark")) c->dark = v ? 1 : 0;
         else if (!strcmp(key, "sfx")) c->sfx = v ? 1 : 0;
         else if (!strcmp(key, "bgm")) c->bgm = v ? 1 : 0;
+        else if (!strcmp(key, "led")) c->led = v ? 1 : 0;
         else if (!strcmp(key, "clock24")) c->clock24 = v ? 1 : 0;
         else if (!strcmp(key, "bg_hue") && v >= -1 && v < 360) c->bg_hue = v;
         else if (!strcmp(key, "bg_rainbow")) c->bg_rainbow = v ? 1 : 0;
@@ -458,8 +476,8 @@ static void config_save(const Config *c) {
     mkdir(CFG_DIR, 0777);
     FILE *f = fopen(CFG_PATH, "w");
     if (!f) return;
-    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\ncheck_update=%d\ndark=%d\nsfx=%d\nbgm=%d\nclock24=%d\nbg_hue=%d\nbg_rainbow=%d\n",
-            c->lang, c->confirm, c->exit_after, c->check_update, c->dark, c->sfx, c->bgm, c->clock24, c->bg_hue, c->bg_rainbow);
+    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\ncheck_update=%d\ndark=%d\nsfx=%d\nbgm=%d\nclock24=%d\nbg_hue=%d\nbg_rainbow=%d\nled=%d\n",
+            c->lang, c->confirm, c->exit_after, c->check_update, c->dark, c->sfx, c->bgm, c->clock24, c->bg_hue, c->bg_rainbow, c->led);
     if (strcmp(c->pack_url, PACK_URL_DEFAULT) != 0)     // only persist a custom URL
         fprintf(f, "pack_url=%s\n", c->pack_url);
     fclose(f);
@@ -489,6 +507,30 @@ static void names_load(void) {
         line[strcspn(line, "\r\n")] = '\0';
         if (line[0]) snprintf(g_names[i], NAME_BUF, "%s", line);
     }
+    fclose(f);
+}
+
+// Management color of each folder (hue 0-359), one per line in colors.txt.
+#define COLORS_PATH CFG_DIR "/colors.txt"
+static const int FOLD_HUE_DEF[SLOTS] = { 0, 48, 128 };   // red, yellow, green
+static int g_fold_hue[SLOTS] = { 0, 48, 128 };
+
+static void colors_load(void) {
+    FILE *f = fopen(COLORS_PATH, "r");
+    if (!f) return;
+    for (int i = 0; i < SLOTS; i++) {
+        int v;
+        if (fscanf(f, "%d", &v) == 1 && v >= 0 && v < 360) g_fold_hue[i] = v;
+    }
+    fclose(f);
+}
+
+static void colors_save(void) {
+    mkdir("sdmc:/3ds", 0777);
+    mkdir(CFG_DIR, 0777);
+    FILE *f = fopen(COLORS_PATH, "w");
+    if (!f) return;
+    for (int i = 0; i < SLOTS; i++) fprintf(f, "%d\n", g_fold_hue[i]);
     fclose(f);
 }
 
@@ -1589,7 +1631,7 @@ static C2D_SpriteSheet g_lakitu = NULL;   // Lakitu silhouette (fishing, floats 
 static C2D_SpriteSheet g_chars  = NULL;   // 0: Mario (active button), 1: Mario & Luigi (launch button)
 static C2D_SpriteSheet g_spanner = NULL;  // silver spanner (custom folders)
 static C2D_SpriteSheet g_seek   = NULL;   // seek bar: 0 knob, 1 vertical slot, 2 horizontal slot
-static C2D_SpriteSheet g_icons  = NULL;   // small marks: 0 update, 1 save
+static C2D_SpriteSheet g_icons  = NULL;   // small marks: 0 restart, 1 save, 2 download
 static C2D_SpriteSheet g_trash  = NULL;   // trash can mark
 static C2D_SpriteSheet g_hands  = NULL;   // seek bar hand: 0 pointing, 1 fist
 static C2D_SpriteSheet g_window = NULL;   // window backgrounds: 0 large (UPD_BOX), 1 small (DLG_BOX)
@@ -2480,6 +2522,31 @@ static void draw_name_plate(Rect r, const char *txt, u32 fill, u32 edge, u32 ink
     g_shadow = saved;
 }
 
+// Name plate that is also a button: its own color, with the glass light of the other buttons
+// on top, and it sinks while pressed.
+static void draw_plate_button(Rect r, const char *txt, u32 fill, u32 edge, u32 ink, bool sel) {
+    bool pressed = btn_pressed(r, sel, true);
+    if (pressed) r.y += PRESS_DY;
+    draw_name_plate(r, txt, fill, edge, ink);
+    const float h = 28, y = r.y + (r.h - h) / 2;
+    // light row by row, following the rounded corners of the plate; kept faint so the color shows
+    const int rows = (int)h - 2;
+    const float rad = 4, x0 = r.x + 1, w0 = r.w - 2;
+    for (int j = 0; j < rows; j++) {
+        float d = j < rad ? rad - (j + 0.5f) : (j >= rows - rad ? (j + 0.5f) - (rows - rad) : 0);
+        float in = d > 0 ? rad - sqrtf(rad * rad - d * d) : 0;
+        float t = (float)j / rows;
+        u32 c;
+        if (j < 2) c = C2D_Color32(0xFF, 0xFF, 0xFF, 0x50);                       // top highlight
+        else if (t < 0.45f) c = C2D_Color32(0xFF, 0xFF, 0xFF, (u8)(0x20 * (1 - t / 0.45f)));
+        else if (j == rows - 1) c = C2D_Color32(0x28, 0x2A, 0x30, 0x70);            // bottom edge
+        else if (t > 0.62f) c = C2D_Color32(0, 0, 0, (u8)(0x34 * (t - 0.62f) / 0.38f));
+        else continue;
+        C2D_DrawRectSolid(x0 + in, y + 1 + j, 0.5f, w0 - in * 2, 1, c);
+    }
+    if (pressed) draw_round_rect(r.x + 1, y + 1, r.w - 2, h - 2, 4, C2D_Color32(0, 0, 0, 0x40));
+}
+
 // ---- glyph colors of the round icons ----
 typedef struct { u32 rim, ring_t, ring_b, face_t, face_b, face_mid, glyph; } Metal;
 static Metal metal_gold(void) {
@@ -2660,7 +2727,71 @@ static void status_init(void) {
     g_ptm = R_SUCCEEDED(ptmuInit());
     g_mcu = R_SUCCEEDED(mcuHwcInit());
 }
+// Notification LED (MCU register 0x2D). Needs mcu::HWC, so it may do nothing for a .3dsx.
+typedef struct {
+    u8 delay, smoothing, loop_delay, unused;
+    u8 r[32], g[32], b[32];
+} LedPattern;
+
+static bool g_led_enabled = true;               // "Notification light" setting
+static u8   g_led_rgb[3] = { 0x10, 0xB0, 0xFF };   // color for the next light
+static u32  g_led_last = 0;                      // what the LED shows now (0 = off)
+static u64  g_led_t0 = 0;                        // start of the flashes (0 = none)
+static int  g_led_count = 0;                     // 1 or 2 flashes
+
+static void led_set(bool on) {
+    if (!g_mcu) return;
+    if (!g_led_enabled) on = false;
+    u32 key = on ? 0x1000000u | g_led_rgb[0] << 16 | g_led_rgb[1] << 8 | g_led_rgb[2] : 0;
+    if (key == g_led_last) return;
+    LedPattern p;
+    memset(&p, 0, sizeof p);
+    if (on) {
+        p.delay = 0x20; p.smoothing = 0x10; p.loop_delay = 0xFF;
+        memset(p.r, g_led_rgb[0], 32); memset(p.g, g_led_rgb[1], 32); memset(p.b, g_led_rgb[2], 32);
+    }
+    if (R_SUCCEEDED(MCUHWC_WriteRegister(0x2D, &p, sizeof p))) g_led_last = key;
+}
+
+// LED color from a hue, fully saturated
+static void led_hue(int h) {
+    float hh = (h % 360) / 60.0f, x = 1 - fabsf(fmodf(hh, 2.0f) - 1), c[3] = {0, 0, 0};
+    if (hh < 1) { c[0] = 1; c[1] = x; } else if (hh < 2) { c[0] = x; c[1] = 1; } else if (hh < 3) { c[1] = 1; c[2] = x; }
+    else if (hh < 4) { c[1] = x; c[2] = 1; } else if (hh < 5) { c[0] = x; c[2] = 1; } else { c[0] = 1; c[2] = x; }
+    for (int i = 0; i < 3; i++) g_led_rgb[i] = (u8)(c[i] * 0xFF);
+}
+
+// Updates found: two 1-second light-blue flashes with a short gap.
+static void led_blink(void) {                    // paler than the blue of SpotPass
+    g_led_rgb[0] = 0x60; g_led_rgb[1] = 0xD8; g_led_rgb[2] = 0xFF;
+    g_led_t0 = osGetTime(); g_led_count = 2;
+}
+
+// Folder switched: one 1-second flash in its management color.
+static void led_flash_hue(int h) { led_hue(h); g_led_t0 = osGetTime(); g_led_count = 1; }
+
+// Important notice (red-framed window): one 1-second flash in orange.
+static void led_flash_alert(void) {
+    g_led_rgb[0] = 0xFF; g_led_rgb[1] = 0x50; g_led_rgb[2] = 0x00;
+    g_led_t0 = osGetTime(); g_led_count = 1;
+}
+
+// Download / install finished: one 1-second flash in deep green (darker than StreetPass green).
+static void led_flash_done(void) {
+    g_led_rgb[0] = 0x00; g_led_rgb[1] = 0x58; g_led_rgb[2] = 0x14;
+    g_led_t0 = osGetTime(); g_led_count = 1;
+}
+
+static void led_update(void) {
+    if (!g_led_t0) return;
+    u64 t = osGetTime() - g_led_t0;
+    u64 end = g_led_count == 2 ? 2500 : 1000;
+    if (t >= end) { led_set(false); g_led_t0 = 0; return; }
+    led_set(t < 1000 || (t >= 1500 && t < 2500));
+}
+
 static void status_exit(void) {
+    led_set(false);                              // never leave the light on
     if (g_mcu) mcuHwcExit();
     if (g_ptm) ptmuExit();
     if (g_ac)  acExit();
@@ -2786,7 +2917,7 @@ static bool hit(Rect r, touchPosition t) {
 // ------------------------------------------------------------ UI layout (bottom screen 320x240)
 
 // Confirmation window. Reset and launch always ask; only DLG_SWITCH follows the "confirm" setting.
-enum { DLG_SWITCH = 0, DLG_RESET, DLG_LAUNCH, DLG_FOLD_SAVE, DLG_FOLD_RESET };
+enum { DLG_SWITCH = 0, DLG_RESET, DLG_LAUNCH, DLG_FOLD_SAVE, DLG_FOLD_RESET, DLG_RESTART };
 
 typedef enum { SCR_MAIN, SCR_SETTINGS, SCR_ABOUT, SCR_APPUPD, SCR_EXTRA, SCR_FOLDERS, SCR_BGCOLOR } Screen;
 
@@ -2817,6 +2948,7 @@ static const Rect FOLD_SAVE  = { 90, 205, 130, 30};   // also used by the backgr
 static const Rect BG_TOUCH = {16, 54, 288, 76};       // touch area of the bar and the seek bar
 static const Rect BG_RANDOM = {44, 136, 112, 30};
 static const Rect BG_RAINBOW = {164, 136, 112, 30};
+static const Rect BG_RANDOM_C = {104, 136, 112, 30};  // random alone (folder colors)
 #define RAINBOW_MS   30000                            // one full loop
 
 static int rainbow_hue_now(void) {
@@ -2843,20 +2975,27 @@ static const Rect EX_NOTE_HIT[EX_ITEMS] = { {4, 56, 42, 42}, {4, 134, 42, 42} };
 static const Rect EX_DL_R[EX_ITEMS]   = { {200, 60, 106, 34}, {200, 138, 106, 34} };
 
 // Settings: a scrollable list (LIST_N rows) + a fixed Back button (index LIST_N)
-#define LIST_N       12
+#define LIST_N       14
 #define SET_N        (LIST_N + 1)
 #define LIST_Y       28
 #define LIST_H       170
 #define ROW_PITCH    32
 #define ROW_H        28
-#define LIST_CONTENT (LIST_N * ROW_PITCH)
+#define SET_RESTART  11             // "Restart app": only for the .cia, hidden for a .3dsx
+#define LIST_CONTENT (set_rows() * ROW_PITCH)
 #define SB_X         300
 #define THUMB_H      ((LIST_H * LIST_H) / LIST_CONTENT)
 
 static const Rect BACK_R = {0, 204, 84, 36};       // back tab, bottom-left corner
 
+static bool g_hide_restart = false;
+
+static int set_rows(void) { return LIST_N - (g_hide_restart ? 1 : 0); }
+static int set_pos(int i)  { return i - (g_hide_restart && i > SET_RESTART ? 1 : 0); }   // item -> row
+static int set_item(int p) { return p + (g_hide_restart && p >= SET_RESTART ? 1 : 0); }  // row -> item
+
 static Rect row_rect(int i, int scroll) {
-    Rect r = {12, (float)(LIST_Y + i * ROW_PITCH - scroll), 280, ROW_H};
+    Rect r = {12, (float)(LIST_Y + set_pos(i) * ROW_PITCH - scroll), 280, ROW_H};
     return r;
 }
 
@@ -2937,13 +3076,16 @@ int main(int argc, char **argv) {
 
     // which format is running? (.3dsx from the Homebrew Launcher, or an installed .cia)
     g_upd.is_cia = !envIsHomebrew();
+    g_hide_restart = !g_upd.is_cia;
     if (argc > 0 && argv && argv[0] && !strncmp(argv[0], "sdmc:/", 6) && strstr(argv[0], ".3dsx"))
         snprintf(g_upd.target, sizeof g_upd.target, "%s", argv[0]);
     else
         snprintf(g_upd.target, sizeof g_upd.target, "%s", DEFAULT_3DSX_PATH);
     Config cfg;
     config_load(&cfg);
+    g_led_enabled = cfg.led;
     names_load();
+    colors_load();
     apply_theme(cfg.dark);
     set_bg_dark(cfg.dark);
     g_sfx_on = cfg.sfx;
@@ -2983,8 +3125,9 @@ int main(int argc, char **argv) {
     bool t_drag = false;
     touchPosition t_start = {0, 0};
     int ex_cursor = 0;                     // extra screen: 0 MK7 DL, 1 ACNL DL, 2 back, 3 MK7 note, 4 ACNL note
-    int fold_cursor = 0;                   // custom folders: 0-2 rename, 3 save, 4 reset, 5 back, 6 "!"
+    int fold_cursor = 0;                   // custom folders: 0-2 rename, 3 save, 4 reset, 5 back, 6 "!", 7-9 color
     char ed_names[SLOTS][NAME_BUF];        // names being edited (saved only by "Save changes")
+    int bg_target = -1;                    // color screen: -1 background, 0-2 folder management color
     int bg_cursor = 0;                     // background color: 0 seek bar, 1 save, 2 reset, 3 back, 4 random, 5 rainbow
     bool ed_rainbow = false;               // rainbow while choosing
     int ed_hue = -1;                       // hue being chosen (shown live, saved only by "Save")
@@ -3079,6 +3222,15 @@ int main(int argc, char **argv) {
         bool    ok_plain = false;   // force the normal OK sound
         int     force_se = -1;
 
+        led_update();
+        {                                              // folder color screen: the LED shows the color
+            static bool holding = false;
+            bool hold = screen == SCR_BGCOLOR && bg_target >= 0 && ed_hue >= 0;
+            if (hold) { led_hue(ed_hue); led_set(true); g_led_t0 = 0; }
+            else if (holding) led_set(false);
+            holding = hold;
+        }
+
         // ---------- pack update check result ----------
         if (chk_pending) {
             if (g_chk.state == CHK_DONE) {
@@ -3088,6 +3240,7 @@ int main(int argc, char **argv) {
                     version_cmp(g_chk.remote, pack_ver) > 0) {
                     snprintf(latest, sizeof latest, "%s", g_chk.remote);
                     upd_dialog = true;
+                    led_blink();                     // pack update found
                 }
             } else if (g_chk.state == CHK_FAIL) {
                 chk_pending = false;     // offline etc.: stay silent
@@ -3100,6 +3253,7 @@ int main(int argc, char **argv) {
                 version_cmp(g_app.remote, APP_VERSION) > 0) {
                 app_dialog = true;
                 app_yes = true;
+                led_blink();                         // app update found
             }
         }
 
@@ -3112,6 +3266,7 @@ int main(int argc, char **argv) {
 
         if (!notice && notice_queue && note_dialog < 0 && !dialog) {
             notice = (notice_queue & 8) ? 8 : (notice_queue & 1) ? 1 : (notice_queue & 2) ? 2 : 4;   // no CTGP-7 first
+            led_flash_alert();
             notice_queue &= ~notice;
         }
 
@@ -3187,7 +3342,7 @@ int main(int argc, char **argv) {
             else if (act == 4) {                    // cursor and scroll stay where they were left
                 screen = SCR_SETTINGS;
                 if (set_cursor < LIST_N) {          // the list may have been dragged away from the cursor
-                    int ctop = set_cursor * ROW_PITCH;
+                    int ctop = set_pos(set_cursor) * ROW_PITCH;
                     if (ctop < scroll) scroll = ctop;
                     if (ctop + ROW_H > scroll + LIST_H) scroll = ctop + ROW_H - LIST_H;
                 }
@@ -3201,6 +3356,9 @@ int main(int argc, char **argv) {
                 memcpy(ed_names, g_names, sizeof ed_names);
             }
         } else if (screen == SCR_BGCOLOR) {
+            bool fold_mode = bg_target >= 0;
+            int bg_back = fold_mode ? SCR_FOLDERS : SCR_SETTINGS;
+            if (fold_mode && bg_cursor == 5) bg_cursor = 4;            // no rainbow for folders
             bool mid_row = bg_cursor == 4 || bg_cursor == 5;
             if (down & KEY_UP)   bg_cursor = bg_cursor == 0 ? 1 : mid_row ? 0 : 4;
             if (down & KEY_DOWN) bg_cursor = bg_cursor == 0 ? 4 : mid_row ? 1 : 0;
@@ -3213,18 +3371,18 @@ int main(int argc, char **argv) {
                 if (down & KEY_LEFT)  { if (bg_cursor == 1) bg_cursor = 3; else if (bg_cursor == 2) bg_cursor = 1; }
                 if (down & KEY_RIGHT) { if (bg_cursor == 3) bg_cursor = 1; else if (bg_cursor == 1) bg_cursor = 2; }
                 if (down & KEY_LEFT)  { if (bg_cursor == 5) bg_cursor = 4; }
-                if (down & KEY_RIGHT) { if (bg_cursor == 4) bg_cursor = 5; }
+                if (down & KEY_RIGHT) { if (bg_cursor == 4 && !fold_mode) bg_cursor = 5; }
             }
             int act = -1;
             if (down & KEY_A) act = bg_cursor;
-            if (down & KEY_B) screen = SCR_SETTINGS;        // the color goes back to the saved one
+            if (down & KEY_B) screen = bg_back;             // the color goes back to the saved one
             if (tap) {
                 if (hit(BG_TOUCH, tp)) { t_seek = true; bg_cursor = 0; }
                 else if (hit(FOLD_SAVE, tp)) act = 1;
                 else if (hit(FOLD_RESET, tp)) act = 2;
                 else if (hit(ABOUT_BACK, tp)) act = 3;
-                else if (hit(BG_RANDOM, tp)) act = 4;
-                else if (hit(BG_RAINBOW, tp)) act = 5;
+                else if (hit(fold_mode ? BG_RANDOM_C : BG_RANDOM, tp)) act = 4;
+                else if (!fold_mode && hit(BG_RAINBOW, tp)) act = 5;
                 if (act >= 0) bg_cursor = act;
             }
             if (t_seek && (held & KEY_TOUCH)) {
@@ -3234,7 +3392,12 @@ int main(int argc, char **argv) {
                 bg_saved = false;
             }
             if (up & KEY_TOUCH) t_seek = false;
-            if (act == 1) {
+            if (act == 1 && fold_mode) {
+                ok_sfx = true;
+                g_fold_hue[bg_target] = ed_hue;
+                colors_save();
+                bg_saved = true;
+            } else if (act == 1) {
                 ok_sfx = true;
                 cfg.bg_hue = ed_hue;
                 cfg.bg_rainbow = ed_rainbow;
@@ -3242,7 +3405,7 @@ int main(int argc, char **argv) {
                 bg_saved = true;
             } else if (act == 2) {
                 ok_sfx = true;
-                ed_hue = -1;
+                ed_hue = fold_mode ? FOLD_HUE_DEF[bg_target] : -1;
                 ed_rainbow = false;
                 bg_saved = false;
             } else if (act == 4) {
@@ -3254,14 +3417,23 @@ int main(int argc, char **argv) {
                 ok_sfx = true;
                 ed_rainbow = true;
                 bg_saved = false;
-            } else if (act == 3) screen = SCR_SETTINGS;
+            } else if (act == 3) screen = bg_back;
         } else if (screen == SCR_FOLDERS) {
             bool bottom = fold_cursor >= 3 && fold_cursor <= 5;
             bool top_btn = fold_cursor == 6;
-            if (down & KEY_UP)   fold_cursor = top_btn ? 3 : bottom ? 2 : (fold_cursor == 0 ? 6 : fold_cursor - 1);
-            if (down & KEY_DOWN) fold_cursor = top_btn ? 0 : bottom ? 6 : fold_cursor + 1;
-            if (down & KEY_LEFT)  { if (fold_cursor == 3) fold_cursor = 5; else if (fold_cursor == 4) fold_cursor = 3; }
-            if (down & KEY_RIGHT) { if (fold_cursor == 5) fold_cursor = 3; else if (fold_cursor == 3) fold_cursor = 4; }
+            bool plate = fold_cursor >= 7;                // name plates: 7-9 (management color)
+            if (down & KEY_UP) {
+                if (plate) fold_cursor = fold_cursor == 7 ? 6 : fold_cursor - 1;
+                else fold_cursor = top_btn ? 3 : bottom ? 2 : (fold_cursor == 0 ? 6 : fold_cursor - 1);
+            }
+            if (down & KEY_DOWN) {
+                if (plate) fold_cursor = fold_cursor == 9 ? 3 : fold_cursor + 1;
+                else fold_cursor = top_btn ? 0 : bottom ? 6 : fold_cursor + 1;
+            }
+            if (down & KEY_LEFT)  { if (fold_cursor == 3) fold_cursor = 5; else if (fold_cursor == 4) fold_cursor = 3;
+                                    else if (fold_cursor < SLOTS) fold_cursor += 7; }
+            if (down & KEY_RIGHT) { if (fold_cursor == 5) fold_cursor = 3; else if (fold_cursor == 3) fold_cursor = 4;
+                                    else if (plate) fold_cursor -= 7; }
             int act = -1;
             if (down & KEY_A) act = fold_cursor;
             if (down & KEY_B) screen = SCR_MAIN;          // unsaved edits are dropped
@@ -3275,6 +3447,7 @@ int main(int argc, char **argv) {
                 if (hit(FOLD_RESET, tp)) act = 4;
                 if (hit(ABOUT_BACK, tp)) act = 5;
                 if (hit(FOLD_NOTE_HIT, tp)) act = 6;
+                for (int i = 0; i < SLOTS; i++) if (hit(FOLD_NAME_R[i], tp)) act = 7 + i;
                 if (act >= 0) fold_cursor = act;
             }
             if (act >= 0 && act < SLOTS) { ok_sfx = true; do_rename = act; }
@@ -3286,6 +3459,16 @@ int main(int argc, char **argv) {
                 dialog = true; dlg_kind = DLG_FOLD_RESET; dlg_yes = false;
             } else if (act == 5) screen = SCR_MAIN;
             else if (act == 6) note_dialog = NOTE_NAMES;
+            else if (act >= 7) {                          // management color: the color screen, for one folder
+                ok_sfx = true;
+                screen = SCR_BGCOLOR;
+                bg_target = act - 7;
+                bg_cursor = 0;
+                ed_hue = g_fold_hue[bg_target];
+                ed_rainbow = false;
+                bg_saved = false;
+                t_seek = false;
+            }
         } else if (screen == SCR_EXTRA) {
             if (!ex_busy()) {
                 // two columns: note (3,4) | download (0,1); back (2) is shared
@@ -3387,6 +3570,8 @@ int main(int argc, char **argv) {
             const int max_scroll = LIST_CONTENT - LIST_H;
             if (down & KEY_UP)    { set_cursor = (set_cursor + SET_N - 1) % SET_N; follow = true; }
             if (down & KEY_DOWN)  { set_cursor = (set_cursor + 1) % SET_N; follow = true; }
+            if (g_hide_restart && set_cursor == SET_RESTART)                 // step over the hidden row
+                set_cursor = (down & KEY_UP) ? SET_RESTART - 1 : SET_RESTART + 1;
             if (down & KEY_LEFT)  { dir = -1; act = set_cursor; }
             if (down & KEY_RIGHT) { dir = +1; act = set_cursor; }
             if (down & KEY_A)     { dir = +1; act = set_cursor; }
@@ -3418,7 +3603,8 @@ int main(int argc, char **argv) {
                 } else if (t_mode == 1 && !t_drag) {
                     int y = (int)t_start.py - LIST_Y + scroll;
                     int row = y / ROW_PITCH;
-                    if (row >= 0 && row < LIST_N && (y % ROW_PITCH) < ROW_H) {
+                    if (row >= 0 && row < set_rows() && (y % ROW_PITCH) < ROW_H) {
+                        row = set_item(row);
                         set_cursor = row; act = row; dir = +1;
                     }
                 }
@@ -3426,7 +3612,7 @@ int main(int argc, char **argv) {
             }
 
             if (follow && set_cursor < LIST_N) {
-                int top = set_cursor * ROW_PITCH;
+                int top = set_pos(set_cursor) * ROW_PITCH;
                 if (top < scroll) scroll = top;
                 if (top + ROW_H > scroll + LIST_H) scroll = top + ROW_H - LIST_H;
             }
@@ -3437,8 +3623,11 @@ int main(int argc, char **argv) {
             if ((t_mode == 1 && t_drag) || t_mode == 2) {
                 int first = (scroll + ROW_PITCH - 1) / ROW_PITCH;
                 int last = (scroll + LIST_H - ROW_H) / ROW_PITCH;
-                if (set_cursor < first) set_cursor = first;
-                else if (set_cursor < LIST_N && set_cursor > last) set_cursor = last;
+                if (set_cursor < LIST_N) {
+                    int pos = set_pos(set_cursor);
+                    if (pos < first) set_cursor = set_item(first);
+                    else if (pos > last) set_cursor = set_item(last);
+                }
                 pv_set = set_cursor;                     // no cursor sound: the seek bar has its own
             }
 
@@ -3454,12 +3643,14 @@ int main(int argc, char **argv) {
                 case 2: cfg.dark = !cfg.dark; changed = true; break;
                 case 3: cfg.sfx = !cfg.sfx; changed = true; break;
                 case 4: cfg.bgm = !cfg.bgm; changed = true; break;
-                case 5: cfg.confirm = !cfg.confirm; changed = true; break;
-                case 6: cfg.exit_after = !cfg.exit_after; changed = true; break;
-                case 7: cfg.check_update = !cfg.check_update; changed = true; break;
-                case 8:
+                case 5: cfg.led = !cfg.led; changed = true; break;
+                case 6: cfg.confirm = !cfg.confirm; changed = true; break;
+                case 7: cfg.exit_after = !cfg.exit_after; changed = true; break;
+                case 8: cfg.check_update = !cfg.check_update; changed = true; break;
+                case 9:
                     if (!lr) {
                         screen = SCR_BGCOLOR;
+                        bg_target = -1;
                         bg_cursor = 0;
                         ed_hue = cfg.bg_hue;
                         ed_rainbow = cfg.bg_rainbow != 0;
@@ -3467,30 +3658,35 @@ int main(int argc, char **argv) {
                         t_seek = false;
                     }
                     break;
-                case 9:
+                case 10:
                     if (!lr) { screen = SCR_APPUPD; appupd_cursor = 0; }
                     break;
-                case 10:
+                case 11:                                // restart (.cia only)
+                    if (!lr) { dialog = true; dlg_kind = DLG_RESTART; dlg_yes = true; }
+                    break;
+                case 12:
                     if (!lr) { dialog = true; dlg_kind = DLG_RESET; dlg_yes = false; }
                     break;
-                case 11:
+                case 13:
                     if (!lr) {
                         load_pack_version(pack_ver, sizeof pack_ver);
                         screen = SCR_ABOUT;
                         about_cursor = 0;
                     }
                     break;
-                case 12:
+                case 14:
                     if (!lr) screen = SCR_MAIN;
                     break;
                 }
                 if (act < LIST_N) ok_sfx = true;
-                if (act >= 8 && act <= 11) ok_plain = true;   // background color / app update / reset / about
+                if (act >= 9 && act <= 13) ok_plain = true;   // background color / app update / restart / reset / about
                 if (changed) {
                     config_save(&cfg);
                     apply_theme(cfg.dark);
                     set_bg_dark(cfg.dark);
                     g_sfx_on = cfg.sfx;
+                    g_led_enabled = cfg.led;
+                    if (!cfg.led) led_set(false);
                 }
             }
         }
@@ -3513,8 +3709,15 @@ int main(int argc, char **argv) {
             apply_theme(cfg.dark);
             set_bg_dark(cfg.dark);
             g_sfx_on = cfg.sfx;
+            g_led_enabled = cfg.led;
         } else if (do_perform && dlg_kind == DLG_LAUNCH) {
             do_launch = true;
+        } else if (do_perform && dlg_kind == DLG_RESTART) {
+            u64 tid = 0;
+            if (R_SUCCEEDED(APT_GetProgramID(&tid)) && tid) {
+                aptSetChainloader(tid, MEDIATYPE_SD);
+                quit_pending = true;
+            }
         } else if (do_perform && dlg_kind == DLG_FOLD_SAVE) {
             int r = names_apply(ed_names, active);
             fold_msg = r == 0 ? 1 : r == 1 ? 3 : 4;
@@ -3527,6 +3730,7 @@ int main(int argc, char **argv) {
             fold_msg = 0;
         } else if (do_perform) {
             msg_kind = do_switch(active, dlg_target, &msg_arg);
+            if (msg_kind == MSG_DONE) led_flash_hue(g_fold_hue[dlg_target - 1]);
             active = detect_active(&err);
             if (active < 0) active = 0;
             if (msg_kind == MSG_DONE && cfg.exit_after) quit_pending = true;
@@ -3561,7 +3765,7 @@ int main(int argc, char **argv) {
             int se = force_se;
             bool back = (pv_screen == SCR_SETTINGS && screen == SCR_MAIN) ||
                         (pv_screen == SCR_EXTRA && screen == SCR_MAIN) ||
-                        (pv_screen == SCR_FOLDERS && screen == SCR_MAIN) ||
+                        (pv_screen == SCR_FOLDERS && screen == SCR_MAIN) || (pv_screen == SCR_BGCOLOR && screen == SCR_FOLDERS) ||
                         ((pv_screen == SCR_ABOUT || pv_screen == SCR_APPUPD || pv_screen == SCR_BGCOLOR) && screen == SCR_SETTINGS);
             int vis = VIS_NOW;
             if (se < 0) {
@@ -3613,7 +3817,7 @@ int main(int argc, char **argv) {
             bool upd_done = g_upd.state == UPD_DONE;
             bool ex_now = ex_busy();
             if ((upd_done && !was_upd_done) ||
-                (was_ex_busy >= 0 && !ex_now && g_ex.state[was_ex_busy] == EX_DONE)) sfx_play(SE_COMPLETE);
+                (was_ex_busy >= 0 && !ex_now && g_ex.state[was_ex_busy] == EX_DONE)) { sfx_play(SE_COMPLETE); led_flash_done(); }   // .cia: after installing
             was_upd_done = upd_done;
             was_ex_busy = ex_now ? g_ex.item : -1;
         }
@@ -3668,7 +3872,7 @@ int main(int argc, char **argv) {
         {                                              // live while choosing; the knob follows the rainbow
             int rainbow_hue = rainbow_hue_now();
             if (screen == SCR_BGCOLOR && ed_rainbow) ed_hue = rainbow_hue;
-            bg_tint_update(screen == SCR_BGCOLOR ? ed_hue : cfg.bg_rainbow ? rainbow_hue : cfg.bg_hue, cfg.dark);
+            bg_tint_update(screen == SCR_BGCOLOR && bg_target < 0 ? ed_hue : cfg.bg_rainbow ? rainbow_hue : cfg.bg_hue, cfg.dark);
         }
 
         // ---------- draw ----------
@@ -3749,7 +3953,14 @@ int main(int argc, char **argv) {
             if (!dialog && cursor == 6)
                 draw_tooltip(MAIN_R[6].x + slide_dx(0) + MAIN_R[6].w / 2, MAIN_R[6].y + MAIN_R[6].h + 3, S->rename_tip, false);
         } else if (screen == SCR_BGCOLOR) {
-            draw_text_center(S->set_bgcolor, 160, 8, 0.65f, COL_YELLOW);
+            if (bg_target >= 0) {
+                char ttl[96];
+                float tw, th, tsc = 0.6f;
+                snprintf(ttl, sizeof ttl, S->color_title, ed_names[bg_target]);   // the name as shown in the folder menu
+                text_size(ttl, tsc, &tw, &th);
+                if (tw > 300) tsc *= 300 / tw;
+                draw_text_center(ttl, 160, 8, tsc, COL_YELLOW);
+            } else draw_text_center(S->set_bgcolor, 160, 8, 0.65f, COL_YELLOW);
             float pos = BG_BAR_X + (ed_hue < 0 ? 0 : ed_hue) / 359.0f * BG_BAR_W;
             {                                           // color bar: every hue that can be chosen
                 float dx = slide_dx(0), step = BG_BAR_W / 36.0f;
@@ -3778,8 +3989,9 @@ int main(int argc, char **argv) {
             else if (ed_rainbow) draw_text_center(S->rainbow_on, 160, 176, 0.5f, COL_GRAY);
             else if (ed_hue < 0) draw_text_center(S->bg_default, 160, 176, 0.5f, COL_GRAY);
             g_btn_sc = 0.5f;
-            draw_button(slid(BG_RANDOM, 3), S->random_btn, "", !dialog && bg_cursor == 4, false, true, true);
-            draw_button(slid(BG_RAINBOW, 3), S->rainbow_btn, "", !dialog && bg_cursor == 5, false, true, true);
+            draw_button(slid(bg_target >= 0 ? BG_RANDOM_C : BG_RANDOM, 3), S->random_btn, "", !dialog && bg_cursor == 4, false, true, true);
+            if (bg_target < 0)
+                draw_button(slid(BG_RAINBOW, 3), S->rainbow_btn, "", !dialog && bg_cursor == 5, false, true, true);
             draw_button(slid(FOLD_SAVE, 4), S->save_btn, "", !dialog && bg_cursor == 1, false, true, true);
             draw_label_mark(g_icons, 1, slid(FOLD_SAVE, 4), S->save_btn, !dialog && bg_cursor == 1,
                             S == &STR_EN ? 0.72f : 1.0f);
@@ -3799,11 +4011,16 @@ int main(int argc, char **argv) {
                       { 0x3A, 0x32, 0x16, 0x96, 0x82, 0x3C },
                       { 0x1A, 0x32, 0x26, 0x45, 0x86, 0x60 } },
                 };
-                const u8 *pc = PLATE[cfg.dark ? 1 : 0][i];
+                (void)PLATE;
                 bool is_act = active == i + 1;
-                draw_name_plate(slid(FOLD_NAME_R[i], i), ed_names[i],
-                                C2D_Color32(pc[0], pc[1], pc[2], 0xFF), C2D_Color32(pc[3], pc[4], pc[5], 0xFF),
-                                COL_WHITE);
+                Rect nr = slid(FOLD_NAME_R[i], i);
+                int fh = g_fold_hue[i];
+                if (!dialog && fold_cursor == 7 + i)          // cursor on the plate
+                    C2D_DrawRectSolid(nr.x - 3, nr.y + 0, 0.5f, nr.w + 6, nr.h, sel_color());
+                draw_plate_button(nr, ed_names[i],
+                                  cfg.dark ? hsv_color(fh, 0.48f, 0.23f, 0xFF) : hsv_color(fh, 0.2f, 0.96f, 0xFF),
+                                  cfg.dark ? hsv_color(fh, 0.5f, 0.55f, 0xFF) : hsv_color(fh, 0.55f, 0.76f, 0xFF),
+                                  COL_WHITE, !dialog && fold_cursor == 7 + i);
                 g_btn_sc = 0.5f;
                 g_btn_indent = 22;
                 g_press_block = is_act && (g_held & KEY_TOUCH) && hit(fold_mario_hit(i), g_touch);   // touching Mario
@@ -3834,6 +4051,12 @@ int main(int argc, char **argv) {
                 Rect mr = slid(fold_mario_hit(active - 1), active - 1);
                 g_tip_sc = 0.4f;
                 draw_tooltip(mr.x + FOLD_MARIO_W * 0.72f, mr.y + 15, S->mario_talk, true);
+                g_tip_sc = 0.5f;
+            }
+            if (!dialog && fold_cursor >= 7) {           // what the plate does
+                Rect nr = slid(FOLD_NAME_R[fold_cursor - 7], fold_cursor - 7);
+                g_tip_sc = 0.42f;
+                draw_tooltip(nr.x + nr.w / 2, nr.y + nr.h - 2, S->color_tip, false);
                 g_tip_sc = 0.5f;
             }
         } else if (screen == SCR_EXTRA) {
@@ -3977,16 +4200,16 @@ int main(int argc, char **argv) {
         } else {
             const char *langname = cfg.lang == 0 ? S->lang_auto : (cfg.lang == 1 ? "日本語" : "English");
             const char *labels[LIST_N] = {
-                S->set_language, S->set_clock, S->set_dark, S->set_sfx, S->set_bgm, S->set_confirm, S->set_exit, S->set_check,
-                S->set_bgcolor, S->set_appupd, S->set_reset, S->about
+                S->set_language, S->set_clock, S->set_dark, S->set_sfx, S->set_bgm, S->set_led, S->set_confirm, S->set_exit, S->set_check,
+                S->set_bgcolor, S->set_appupd, S->set_restart, S->set_reset, S->about
             };
-            const char *values[LIST_N] = { langname, cfg.clock24 ? S->h24 : S->h12, "", "", "", "", "", "", "", "", "", "" };
+            const char *values[LIST_N] = { langname, cfg.clock24 ? S->h24 : S->h12, "", "", "", "", "", "", "", "", "", "", "", "" };
             // ON/OFF items (shown as switches); NULL = not a switch
             int *toggles[LIST_N] = {
-                NULL, NULL, &cfg.dark, &cfg.sfx, &cfg.bgm, &cfg.confirm, &cfg.exit_after, &cfg.check_update,
-                NULL, NULL, NULL, NULL
+                NULL, NULL, &cfg.dark, &cfg.sfx, &cfg.bgm, &cfg.led, &cfg.confirm, &cfg.exit_after, &cfg.check_update,
+                NULL, NULL, NULL, NULL, NULL
             };
-            static const bool centered[LIST_N] = { false, false, false, false, false, false, false, false, true, true, true, true };
+            static const bool centered[LIST_N] = { false, false, false, false, false, false, false, false, false, true, true, true, true, true };
             static float sw_anim[LIST_N];
             static bool sw_init = false;
             for (int i = 0; i < LIST_N; i++) {          // slide knobs toward their state
@@ -4003,14 +4226,17 @@ int main(int argc, char **argv) {
             // rows (those peeking out of the list area get masked below)
             int first_row = scroll / ROW_PITCH;         // the slide starts at the top visible row
             for (int i = 0; i < LIST_N; i++) {
+                if (g_hide_restart && i == SET_RESTART) continue;
                 Rect r = row_rect(i, scroll);
                 if (r.y + r.h < LIST_Y - 4 || r.y > LIST_Y + LIST_H + 4) continue;
                 bool sel = !dialog && set_cursor == i;
-                r = slid(r, i > first_row ? i - first_row : 0);
+                int pos = set_pos(i);
+                r = slid(r, pos > first_row ? pos - first_row : 0);
                 g_btn_reserve = toggles[i] ? SW_W + 10 : 0;
                 draw_button(r, labels[i], values[i], sel, false, true, centered[i]);
-                if (i == 9) draw_label_mark(g_icons, 0, r, labels[i], sel, 1.0f);    // app update
-                if (i == 10) draw_label_mark(g_trash, 0, r, labels[i], sel, 1.0f);   // reset settings
+                if (i == 10) draw_label_mark(g_icons, 2, r, labels[i], sel, 1.0f);    // app update (download)
+                if (i == 11) draw_label_mark(g_icons, 0, r, labels[i], sel, 1.0f);   // restart (circular arrow)
+                if (i == 12) draw_label_mark(g_trash, 0, r, labels[i], sel, 1.0f);   // reset settings
                 if (toggles[i]) draw_switch(r, sel, sw_anim[i], *toggles[i] != 0);
             }
             g_btn_reserve = 0;
@@ -4045,6 +4271,7 @@ int main(int argc, char **argv) {
             draw_window(DLG_BOX);
             if (dlg_kind == DLG_RESET) snprintf(line, sizeof line, "%s", S->confirm_reset);
             else if (dlg_kind == DLG_LAUNCH) snprintf(line, sizeof line, "%s", S->confirm_launch);
+            else if (dlg_kind == DLG_RESTART) snprintf(line, sizeof line, "%s", S->confirm_restart);
             else if (dlg_kind == DLG_FOLD_SAVE) snprintf(line, sizeof line, "%s", S->confirm_fold_save);
             else if (dlg_kind == DLG_FOLD_RESET) snprintf(line, sizeof line, "%s", S->confirm_fold_reset);
             else snprintf(line, sizeof line, S->confirm_msg, g_names[dlg_target - 1]);
