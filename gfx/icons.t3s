@@ -1,3 +1,4 @@
 --atlas -f rgba8888 -z auto
 icon_update.png
 icon_save.png
+icon_download.png
