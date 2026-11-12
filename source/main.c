@@ -1,4 +1,4 @@
-// More！CTGP-7 Manager Ver.1.2.6 - character folder manager for More!CTGP-7
+// More！CTGP-7 Manager Ver.1.2.7 - character folder manager for More!CTGP-7
 // Target: sdmc:/CTGP-7/MyStuff/Characters{1,2,3}
 // The folder named "Characters" (no number) is the active one.
 // No state file for folders: the active slot is detected from which folders exist.
@@ -25,7 +25,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
-#define APP_VERSION "Ver.1.2.6"
+#define APP_VERSION "Ver.1.2.8"
 #define APP_NAME_1  "More！CTGP-7"
 #define APP_NAME_2  "Manager"          // used only if the logo image fails to load
 #define APP_AUTHOR  "yk"
@@ -45,6 +45,7 @@
 #define PACK_URL_DEFAULT "https://raw.githubusercontent.com/yuuki3ds/More-CTGP-7-Manager/refs/heads/main/version/morever.ini"
 
 // URL of the app version file on GitHub (raw). Display only for now.
+#define CHANGELOG_URL "https://raw.githubusercontent.com/yuuki3ds/More-CTGP-7-Manager/refs/heads/main/version/changelog.ini"
 #define APP_URL_DEFAULT "https://raw.githubusercontent.com/yuuki3ds/More-CTGP-7-Manager/refs/heads/main/version/appver.ini"
 
 // Release files used by the in-app updater
@@ -58,6 +59,7 @@
 // Extra menu: cheat files (raw files in the "extra" folder of the repository)
 #define EXTRA_RAW "https://raw.githubusercontent.com/yuuki3ds/More-CTGP-7-Manager/refs/heads/main/extra/"
 #define CHEATS_DIR "sdmc:/cheats"
+#define PLUGINS_DIR "sdmc:/luma/plugins"          // 3gx: <PLUGINS_DIR>/<title ID>/<name>.3gx
 
 // ------------------------------------------------------------ strings
 
@@ -113,6 +115,7 @@ typedef struct {
     const char *set_sfx;
     const char *set_bgm;
     const char *set_led;
+    const char *set_news;
     const char *app_dlg_msg;
     const char *btn_update;
     const char *btn_later;
@@ -148,6 +151,11 @@ typedef struct {
     const char *confirm_launch;
     const char *confirm_restart;
     const char *notice_ctgp;
+    const char *notice_sd;
+    const char *ex_format;
+    const char *news_title;    // "%s" = version number
+    const char *news_body;     // used when changelog.ini cannot be read
+    const char *coming_soon;
     const char *rename_tip;
     const char *custom_title;
     const char *rename_btn;
@@ -226,7 +234,8 @@ static const Strings STR_EN = {
     "Dark mode",
     "Sound effects",
     "BGM",
-    "Notification light",
+    "LED light",
+    "Send notifications",
     "An app update is available.",
     "Update",
     "Later",
@@ -262,6 +271,11 @@ static const Strings STR_EN = {
     "Launch CTGP-7?",
     "Restart the app?",
     "CTGP-7 is not installed.",
+    "The SD card is almost full.",
+    "Choose the format to download.",
+    "Ver.%s update complete!",
+    "The update was installed.",
+    "Coming soon",
     "Rename folders",
     "Custom Folders",
     "Rename",
@@ -275,7 +289,7 @@ static const Strings STR_EN = {
     "Reset all folder names?",
     "Enter a new folder name",
     "Extra",
-    "This is a cheat code pack in txt format.\nIf you already have your own txt file,\nit will be overwritten.",
+    "This is a cheat code pack in txt/3gx format.\nIf you already have your own txt file,\nit will be overwritten.",
     "Characters not allowed in folder names",
     "Spaces at the start or end, a dot at the end,\nand the name \"Characters\" cannot be used.",
     "Active",
@@ -340,7 +354,8 @@ static const Strings STR_JA = {
     "ダークモード",
     "効果音",
     "BGM",
-    "お知らせランプ",
+    "LEDランプ",
+    "お知らせを送信",
     "アプリのアップデートがあります。",
     "更新する",
     "あとで",
@@ -376,6 +391,11 @@ static const Strings STR_JA = {
     "CTGP-7を起動しますか?",
     "アプリを再起動しますか?",
     "CTGP-7がインストールされていません。",
+    "SDカードの空き容量が不足しています。",
+    "ダウンロードする形式を選んでください。",
+    "Ver.%s アップデートが完了しました！",
+    "アップデートをインストールしました。",
+    "準備中",
     "フォルダ名を変更",
     "カスタムフォルダ",
     "名前を変更",
@@ -389,7 +409,7 @@ static const Strings STR_JA = {
     "フォルダ名をリセットしますか?",
     "新しいフォルダ名を入力",
     "おまけ",
-    "Txt形式のチートコードパックです。\n独自のtxtが既に存在する場合、\n上書きされますのでご注意ください。",
+    "Txt/3gx形式のチートコードパックです。\n独自のtxtが既に存在する場合、\n上書きされますのでご注意ください。",
     "フォルダ名に使えない文字",
     "先頭と末尾の空白、末尾のドット、\n「Characters」という名前も使えません。",
     "有効中",
@@ -415,6 +435,7 @@ typedef struct {
     int sfx;                      // sound effects (0/1)
     int bgm;                      // background music (0/1)
     int led;                      // notification LED (0/1)
+    int news;                     // send a HOME Menu notification after an update (0/1)
     int clock24;                  // 1 = 24-hour clock, 0 = 12-hour
     int bg_hue;                   // background color: hue 0-359, -1 = default
     int bg_rainbow;               // background color loops through all hues (0/1)
@@ -429,6 +450,7 @@ static void config_defaults(Config *c) {
     c->sfx = 1;
     c->bgm = 1;
     c->led = 1;
+    c->news = 1;
     c->clock24 = 1;
     c->bg_hue = -1;
     c->bg_rainbow = 0;
@@ -464,6 +486,7 @@ static void config_load(Config *c) {
         else if (!strcmp(key, "sfx")) c->sfx = v ? 1 : 0;
         else if (!strcmp(key, "bgm")) c->bgm = v ? 1 : 0;
         else if (!strcmp(key, "led")) c->led = v ? 1 : 0;
+        else if (!strcmp(key, "news")) c->news = v ? 1 : 0;
         else if (!strcmp(key, "clock24")) c->clock24 = v ? 1 : 0;
         else if (!strcmp(key, "bg_hue") && v >= -1 && v < 360) c->bg_hue = v;
         else if (!strcmp(key, "bg_rainbow")) c->bg_rainbow = v ? 1 : 0;
@@ -476,8 +499,8 @@ static void config_save(const Config *c) {
     mkdir(CFG_DIR, 0777);
     FILE *f = fopen(CFG_PATH, "w");
     if (!f) return;
-    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\ncheck_update=%d\ndark=%d\nsfx=%d\nbgm=%d\nclock24=%d\nbg_hue=%d\nbg_rainbow=%d\nled=%d\n",
-            c->lang, c->confirm, c->exit_after, c->check_update, c->dark, c->sfx, c->bgm, c->clock24, c->bg_hue, c->bg_rainbow, c->led);
+    fprintf(f, "lang=%d\nconfirm=%d\nexit_after=%d\ncheck_update=%d\ndark=%d\nsfx=%d\nbgm=%d\nclock24=%d\nbg_hue=%d\nbg_rainbow=%d\nled=%d\nnews=%d\n",
+            c->lang, c->confirm, c->exit_after, c->check_update, c->dark, c->sfx, c->bgm, c->clock24, c->bg_hue, c->bg_rainbow, c->led, c->news);
     if (strcmp(c->pack_url, PACK_URL_DEFAULT) != 0)     // only persist a custom URL
         fprintf(f, "pack_url=%s\n", c->pack_url);
     fclose(f);
@@ -939,6 +962,9 @@ static bool upd_install_cia(const char *tmp, bool replace) {
     return ok;
 }
 
+#define CHANGELOG_PATH CFG_DIR "/changelog.ini"
+static bool http_download(const char *url, const char *path);   // with the Extra menu
+
 static void upd_abort(int fail) {
     g_upd.fail = fail;
     remove(UPD_TMP);
@@ -978,6 +1004,8 @@ static void upd_thread(void *arg) {
         if (main_too) g_upd.step = 2;
         if (!upd_fetch(!cia, UPD_TMP2)) return;
     }
+    remove(CHANGELOG_PATH);
+    http_download(CHANGELOG_URL, CHANGELOG_PATH);          // optional: the notification text
     g_upd.state = UPD_INSTALLING;
     g_upd.stage = 0; g_upd.code = 0;
     // romfs keeps the running .3dsx file (or the installed title's content) open, which blocks
@@ -1034,8 +1062,26 @@ static bool upd_can_both(void) {
     return g_upd.other >= 0 && g_app.state != CHK_RUNNING && (g_upd.state == UPD_IDLE || g_upd.state == UPD_FAIL);
 }
 
+// ---- free space on the SD card ----
+#define SD_WARN_BYTES   (32ULL << 20)       // startup warning below this
+#define SD_NEED_UPDATE  (24ULL << 20)       // per format of the app
+#define SD_NEED_EXTRA   (1ULL << 20)        // one cheat file
+static volatile bool g_sd_low = false;      // a download was refused: the main loop shows the notice
+
+static u64 sd_free(void) {
+    FS_ArchiveResource r;
+    if (R_FAILED(FSUSER_GetArchiveResource(&r, SYSTEM_MEDIATYPE_SD))) return ~0ULL;   // unknown: do not block
+    return (u64)r.freeClusters * r.clusterSize;
+}
+
+static bool sd_has(u64 need) {
+    if (sd_free() >= need) return true;
+    g_sd_low = true;
+    return false;
+}
+
 static bool upd_start(bool both, bool only_other) {
-    if (upd_busy() || !net_init()) return false;
+    if (upd_busy() || !sd_has(SD_NEED_UPDATE * (both && !only_other ? 2 : 1)) || !net_init()) return false;
     g_upd.both = both;
     g_upd.only_other = both && only_other;
     mkdir("sdmc:/3ds", 0777);
@@ -1056,6 +1102,8 @@ static bool upd_start(bool both, bool only_other) {
 #define NOTE_AI    EX_ITEMS         // note_dialog values after the Extra items
 #define NOTE_NAMES (EX_ITEMS + 1)
 static const char *EX_NAMES[EX_ITEMS] = { "MK7_Cheat", "ACNL_Cheat" };
+// true once extra/3gx/<name>.3gx is on GitHub; false shows "coming soon" on the 3gx button
+static const bool EX_3GX_READY[EX_ITEMS] = { true, false };
 static const char *EX_FILES_MK7[]  = { "0004000000030600.txt", "0004000000030700.txt", "0004000000030800.txt" };
 static const char *EX_FILES_ACNL[] = { "0004000000086200.txt" };
 static const char **EX_FILES[EX_ITEMS] = { EX_FILES_MK7, EX_FILES_ACNL };
@@ -1063,6 +1111,10 @@ static const int EX_COUNT[EX_ITEMS] = { 3, 1 };
 // the first line of this file holds the version shown in the menu
 static const char *EX_VERFILE[EX_ITEMS] = { "0004000000030600.txt", "0004000000086200.txt" };
 
+// MK7 3gx: the player picks one region (button order JPN / USA / EUR -> index in EX_FILES_MK7)
+#define EX_PICK_REGION(it) ((it) == 0)
+static const char *EX_REG_BTN[3] = { "JPN", "USA", "EUR" };
+static const int   EX_REG_FILE[3] = { 0, 2, 1 };      // 030600 JPN, 030800 USA, 030700 EUR
 static const char *EX_REGIONS[EX_ITEMS] = { "JPN / USA / EUR", "JPN" };
 
 static CheckCtx g_exver[EX_ITEMS];          // version (first line) checks
@@ -1072,8 +1124,12 @@ typedef struct {
     volatile int state[EX_ITEMS];
     volatile int done;                      // files finished in the running job
     volatile int item;                      // running item (-1 = none)
+    volatile bool plugin;                   // running job fetches the 3gx plugins instead of the txt files
+    volatile int only;                      // file index (title ID) to fetch, -1 = all of them
+    volatile int total[EX_ITEMS];           // files in the last job of each item
+    volatile int where[EX_ITEMS];           // last job: -2 txt (cheats), -1 3gx in every title ID, >= 0 3gx in that file's title ID
 } ExJob;
-static ExJob g_ex = { {0}, 0, -1 };
+static ExJob g_ex = { {0}, 0, -1, false, -1, {0}, {0} };
 
 static volatile bool g_ex_quit = false;     // set at exit: stops a running cheat download
 
@@ -1126,16 +1182,51 @@ static bool http_download(const char *url, const char *path) {
     return true;
 }
 
+// Copies a file (via dst.tmp, replaced only on success).
+static bool copy_file(const char *src, const char *dst) {
+    char tmp[310];
+    snprintf(tmp, sizeof tmp, "%s.tmp", dst);
+    FILE *in = fopen(src, "rb");
+    if (!in) return false;
+    FILE *out = fopen(tmp, "wb");
+    if (!out) { fclose(in); return false; }
+    static char buf[16 * 1024];
+    size_t n;
+    bool ok = true;
+    while ((n = fread(buf, 1, sizeof buf, in)) > 0) if (fwrite(buf, 1, n, out) != n) { ok = false; break; }
+    fclose(in);
+    if (fclose(out) != 0) ok = false;
+    if (ok) { remove(dst); ok = rename(tmp, dst) == 0; }
+    if (!ok) remove(tmp);
+    return ok;
+}
+
 static void ex_thread(void *arg) {
     int it = (int)(intptr_t)arg;
     bool ok = true;
-    mkdir(CHEATS_DIR, 0777);
+    bool plugin = g_ex.plugin;
+    if (plugin) { mkdir("sdmc:/luma", 0777); mkdir(PLUGINS_DIR, 0777); }
+    else mkdir(CHEATS_DIR, 0777);
+    char first[300] = "";                                               // 3gx: the downloaded copy
+    int only = g_ex.only, n = 0;
     for (int i = 0; i < EX_COUNT[it] && ok; i++) {
-        char url[300], path[300];
-        snprintf(url, sizeof url, EXTRA_RAW "%s", EX_FILES[it][i]);
-        snprintf(path, sizeof path, CHEATS_DIR "/%s", EX_FILES[it][i]);
+        if (only >= 0 && i != only) continue;
+        n++;
+        char url[300], path[300], tid[17];
+        snprintf(tid, sizeof tid, "%.16s", EX_FILES[it][i]);          // "0004000000030600.txt" -> title ID
+        if (plugin) {                  // one plugin for every region, put in each title ID folder
+            snprintf(path, sizeof path, PLUGINS_DIR "/%s", tid);
+            mkdir(path, 0777);
+            snprintf(path, sizeof path, PLUGINS_DIR "/%s/%s.3gx", tid, EX_NAMES[it]);
+            if (first[0]) { ok = copy_file(first, path); if (ok) g_ex.done = n; continue; }
+            snprintf(url, sizeof url, EXTRA_RAW "3gx/%s.3gx", EX_NAMES[it]);
+            snprintf(first, sizeof first, "%s", path);
+        } else {
+            snprintf(url, sizeof url, EXTRA_RAW "%s", EX_FILES[it][i]);
+            snprintf(path, sizeof path, CHEATS_DIR "/%s", EX_FILES[it][i]);
+        }
         ok = http_download(url, path);
-        if (ok) g_ex.done = i + 1;
+        if (ok) g_ex.done = n;
     }
     g_ex.state[it] = ok ? EX_DONE : EX_FAIL;
     g_ex.item = -1;
@@ -1155,8 +1246,12 @@ static void net_extra_quit(void) {
     for (int i = 0; i < EX_ITEMS; i++) g_exver[i].quit = true;
 }
 
-static bool ex_start(int it) {
-    if (ex_busy() || !net_init()) return false;
+static bool ex_start(int it, bool plugin, int only) {
+    if (ex_busy() || !sd_has(plugin ? SD_NEED_EXTRA * 16 : SD_NEED_EXTRA) || !net_init()) return false;
+    g_ex.plugin = plugin;
+    g_ex.only = only;
+    g_ex.total[it] = only >= 0 ? 1 : EX_COUNT[it];
+    g_ex.where[it] = plugin ? only : -2;
     g_ex.done = 0;
     g_ex.item = it;
     g_ex.state[it] = EX_RUNNING;
@@ -1581,6 +1676,9 @@ static bool g_text_outline = false; // draw_text: outline in the shadow color in
 static u32 g_held = 0;          // keys held this frame (for the pressed look)
 static touchPosition g_touch;   // current touch position
 static bool g_press_block = false; // true while dragging a list: no pressed look
+static touchPosition g_touch0;  // where the stylus first touched (only a button under it can sink)
+static int g_layer = 0;         // window being drawn (0 = the screen itself, else its VIS_NOW number)
+static int g_top_layer = 0;     // the window in front: only its buttons can sink
 // Fixed colors (buttons, scroll bar, fallback panels)
 static u32 COL_PANEL, COL_PANEL_SEL, COL_PANEL_ACT, COL_BORDER;
 static u32 BTN_TEXT, BTN_VALUE, BTN_ACT, BTN_DIS, SHADOW;
@@ -1627,6 +1725,7 @@ static C2D_SpriteSheet g_logo   = NULL;   // 0: top-screen logo (220x103), 1: ab
 static C2D_SpriteSheet g_kart   = NULL;   // kart silhouette that drives across the top screen
 static C2D_SpriteSheet g_shell  = NULL;   // shell that shoots across the top screen
 static C2D_SpriteSheet g_bowser = NULL;   // Bowser kart silhouette
+static C2D_SpriteSheet g_moon = NULL;     // 3UP moon (dark mode only): 0 moon (gray), 1 yellow glow
 static C2D_SpriteSheet g_lakitu = NULL;   // Lakitu silhouette (fishing, floats above the others)
 static C2D_SpriteSheet g_chars  = NULL;   // 0: Mario (active button), 1: Mario & Luigi (launch button)
 static C2D_SpriteSheet g_spanner = NULL;  // silver spanner (custom folders)
@@ -1827,6 +1926,13 @@ static void draw_particles(bool dark) {
 #define SPIN_MS      1100           // spin-out duration
 #define SHELLS       3
 #define LAKITU_SPEED (BOWSER_SPEED * 1.5f)
+
+// 3D depth of the top-screen layers at full slider (px per eye; + behind the screen, - in front)
+#define DEPTH_BG      4.0f
+#define DEPTH_MOON    3.0f
+#define DEPTH_RACERS  2.0f
+#define DEPTH_LAKITU -2.0f
+#define DEPTH_LOGO   -3.0f
 #define LAKITU_SCALE 0.75f          // drawn size (1.0 = 75x63)
 #define LAKITU_Y     130.0f         // top of the image at rest
 #define LAKITU_BOB   3.0f           // height of the floating motion (px)
@@ -2085,7 +2191,6 @@ static void draw_lakitu(u64 now) {
 
 static void draw_kart(void) {
     u64 now = osGetTime();
-    draw_lakitu(now);
     draw_racer(&g_r[R_BOWSER], now);                       // back lane first
     draw_racer(&g_r[R_MARIO], now);
     if (g_shell) {
@@ -2162,9 +2267,11 @@ static u32 sel_color(void) {
 
 // A button looks pressed while the stylus is on it or A is held on the selected one.
 static bool btn_pressed(Rect r, bool sel, bool enabled) {
-    if (!enabled || g_press_block) return false;
+    if (!enabled || g_press_block || g_layer != g_top_layer) return false;   // covered by a window
     if ((g_held & KEY_TOUCH) && g_touch.px >= r.x && g_touch.px < r.x + r.w &&
-        g_touch.py >= r.y && g_touch.py < r.y + r.h) return true;
+        g_touch.py >= r.y && g_touch.py < r.y + r.h &&
+        g_touch0.px >= r.x && g_touch0.px < r.x + r.w &&               // the touch started on it
+        g_touch0.py >= r.y && g_touch0.py < r.y + r.h) return true;
     return sel && (g_held & KEY_A);
 }
 
@@ -2733,7 +2840,7 @@ typedef struct {
     u8 r[32], g[32], b[32];
 } LedPattern;
 
-static bool g_led_enabled = true;               // "Notification light" setting
+static bool g_led_enabled = true;               // "LED light" setting
 static u8   g_led_rgb[3] = { 0x10, 0xB0, 0xFF };   // color for the next light
 static u32  g_led_last = 0;                      // what the LED shows now (0 = off)
 static u64  g_led_t0 = 0;                        // start of the flashes (0 = none)
@@ -2917,7 +3024,7 @@ static bool hit(Rect r, touchPosition t) {
 // ------------------------------------------------------------ UI layout (bottom screen 320x240)
 
 // Confirmation window. Reset and launch always ask; only DLG_SWITCH follows the "confirm" setting.
-enum { DLG_SWITCH = 0, DLG_RESET, DLG_LAUNCH, DLG_FOLD_SAVE, DLG_FOLD_RESET, DLG_RESTART };
+enum { DLG_SWITCH = 0, DLG_RESET, DLG_LAUNCH, DLG_FOLD_SAVE, DLG_FOLD_RESET, DLG_RESTART, DLG_EX_FORMAT, DLG_EX_REGION };
 
 typedef enum { SCR_MAIN, SCR_SETTINGS, SCR_ABOUT, SCR_APPUPD, SCR_EXTRA, SCR_FOLDERS, SCR_BGCOLOR } Screen;
 
@@ -2975,13 +3082,13 @@ static const Rect EX_NOTE_HIT[EX_ITEMS] = { {4, 56, 42, 42}, {4, 134, 42, 42} };
 static const Rect EX_DL_R[EX_ITEMS]   = { {200, 60, 106, 34}, {200, 138, 106, 34} };
 
 // Settings: a scrollable list (LIST_N rows) + a fixed Back button (index LIST_N)
-#define LIST_N       14
+#define LIST_N       15
 #define SET_N        (LIST_N + 1)
 #define LIST_Y       28
 #define LIST_H       170
 #define ROW_PITCH    32
 #define ROW_H        28
-#define SET_RESTART  11             // "Restart app": only for the .cia, hidden for a .3dsx
+#define SET_RESTART  12             // "Restart app": only for the .cia, hidden for a .3dsx
 #define LIST_CONTENT (set_rows() * ROW_PITCH)
 #define SB_X         300
 #define THUMB_H      ((LIST_H * LIST_H) / LIST_CONTENT)
@@ -3012,6 +3119,7 @@ static const Rect APP_NO      = {166, 150, 116, 34};
 static const Rect DLG_BOX = { 30, 64, 260, 112};
 static const Rect DLG_YES = { 48, 124, 100, 36};
 static const Rect DLG_NO  = {172, 124, 100, 36};
+static const Rect DLG_REG[3] = { {38, 124, 76, 36}, {122, 124, 76, 36}, {206, 124, 76, 36} };   // region choice
 static const Rect UPD_BOX = { 12,  46, 296, 150};
 static const Rect DLG_OK  = {110, 150, 100, 34};
 
@@ -3035,6 +3143,193 @@ static const Strings *get_strings(const Config *c, bool sys_ja) {
 
 // ------------------------------------------------------------ main
 
+// Version number in a line ("[MK7 Cheats] Ver.1.05 by ..." -> "1.05"). The number right after
+// "Ver" / "v" wins; otherwise the first dotted number, otherwise the first number.
+static size_t num_len(const char *p) {
+    const char *q = p;
+    while ((*q >= '0' && *q <= '9') || (*q == '.' && q[1] >= '0' && q[1] <= '9')) q++;
+    return (size_t)(q - p);
+}
+
+static bool pick_version(const char *s, char *out, size_t n) {
+    const char *best = NULL;
+    size_t len = 0;
+    for (const char *p = s; *p && !best; p++) {                 // after "ver" or a lone "v"
+        if ((p[0] | 0x20) != 'v' || (p > s && ((p[-1] | 0x20) >= 'a' && (p[-1] | 0x20) <= 'z'))) continue;
+        const char *q = p + 1;
+        if ((q[0] | 0x20) == 'e' && (q[1] | 0x20) == 'r') {
+            q += 2;
+            while ((*q | 0x20) >= 'a' && (*q | 0x20) <= 'z') q++;  // "version"
+        }
+        while (*q == '.' || *q == ' ' || *q == ':') q++;
+        if (*q >= '0' && *q <= '9') { best = q; len = num_len(q); }
+    }
+    bool dot = false;
+    for (const char *p = s; *p && !best; p++) {                 // first dotted number
+        if (*p < '0' || *p > '9' || (p > s && p[-1] >= '0' && p[-1] <= '9')) continue;
+        size_t l = num_len(p);
+        if (memchr(p, '.', l)) { best = p; len = l; dot = true; }
+        p += l - 1;
+    }
+    for (const char *p = s; *p && !best && !dot; p++)           // first number
+        if (*p >= '0' && *p <= '9') { best = p; len = num_len(p); }
+    if (!best || len + 1 > n) return false;
+    memcpy(out, best, len);
+    out[len] = '\0';
+    return true;
+}
+
+// Menu title: yellow text on a faint see-through plate that only covers the text.
+static void draw_title(const char *txt, float y, float sc) {
+    float w, h;
+    text_size(txt, sc, &w, &h);
+    float px = 10, py = 2, x = 160 - w / 2 - px, bw = w + px * 2, bh = h + py * 2;
+    bool dark = g_bg_inverted;
+    u32 edge = dark ? C2D_Color32(0xFF, 0xE0, 0x40, 0x60) : C2D_Color32(0x7A, 0x56, 0x00, 0x58);
+    u32 fill = dark ? C2D_Color32(0x00, 0x00, 0x00, 0x58) : C2D_Color32(0xFF, 0xFF, 0xFF, 0x68);
+    draw_round_rect(x, y - py, bw, bh, 3.5f, edge);                   // corner dots stay small
+    draw_round_rect(x + 1, y - py + 1, bw - 2, bh - 2, 2.5f, fill);
+    draw_text_center(txt, 160, y, sc, COL_YELLOW);
+}
+
+// ---- HOME Menu notification after an update ----
+// changelog.ini (from version/changelog.ini on GitHub): every "jp=" (Japanese) or "en=" (English) line
+// matching the app language is one line of the message.
+#define NEWS_TITLE_MAX 32           // UTF-16 units
+#define NEWS_MSG_MAX   1000
+
+static void news_send_update(const Strings *S, const char *remote) {
+    char num[32], title[128], msg[NEWS_MSG_MAX * 3 + 1];
+    if (!pick_version(remote, num, sizeof num)) snprintf(num, sizeof num, "%s", remote);
+    snprintf(title, sizeof title, S->news_title, num);
+    msg[0] = '\0';
+    FILE *f = fopen(CHANGELOG_PATH, "r");
+    if (f) {
+        char ln[512];
+        size_t used = 0;
+        const char *key = (S == &STR_JA) ? "jp=" : "en=";
+        while (fgets(ln, sizeof ln, f)) {
+            char *v = ln;
+            if (!strncmp(v, "\xEF\xBB\xBF", 3)) v += 3;             // BOM
+            if (strncmp(v, key, 3)) continue;
+            v += 3;
+            v[strcspn(v, "\r\n")] = '\0';
+            int w = snprintf(msg + used, sizeof msg - used, "%s%s", used ? "\n" : "", v);
+            if (w < 0 || (size_t)w >= sizeof msg - used) break;
+            used += w;
+        }
+        fclose(f);
+        remove(CHANGELOG_PATH);
+    }
+    if (!msg[0]) snprintf(msg, sizeof msg, "%s", S->news_body);
+
+    static u16 t16[NEWS_TITLE_MAX + 1], m16[NEWS_MSG_MAX + 1];
+    ssize_t tl = utf8_to_utf16(t16, (const u8 *)title, NEWS_TITLE_MAX);
+    ssize_t ml = utf8_to_utf16(m16, (const u8 *)msg, NEWS_MSG_MAX);
+    if (tl <= 0 || ml <= 0) return;
+    if (tl > NEWS_TITLE_MAX) tl = NEWS_TITLE_MAX;
+    if (ml > NEWS_MSG_MAX) ml = NEWS_MSG_MAX;
+    if (R_FAILED(newsInit())) return;                          // no news:u (e.g. some .3dsx setups)
+    NEWS_AddNotification(t16, tl, m16, ml, NULL, 0, false);
+    newsExit();
+}
+
+// ---- CTGP-7 version (sdmc:/CTGP-7/config/version.bin) ----
+// Shown as text when the file holds text; otherwise its first bytes are read as numbers.
+static void load_ctgp_version(char *out, size_t n) {
+    out[0] = '\0';
+    FILE *f = fopen("sdmc:/CTGP-7/config/version.bin", "rb");
+    if (!f) return;
+    u8 b[32];
+    size_t len = fread(b, 1, sizeof b, f);
+    fclose(f);
+    size_t k = 0;
+    bool digit = false;
+    while (k < len && k + 1 < n && b[k] >= 0x20 && b[k] < 0x7F) {
+        if (b[k] >= '0' && b[k] <= '9') digit = true;
+        out[k] = (char)b[k]; k++;
+    }
+    out[k] = '\0';
+    if (digit) return;
+    if (len >= 3) snprintf(out, n, "%u.%u.%u", b[0], b[1], b[2]);
+    else out[0] = '\0';
+}
+
+// ---- title logo: floats gently, and a light runs across it now and then ----
+#define LOGO_SHINE_MS  6000          // one light every 6 s
+#define LOGO_SHINE_RUN 1100          // time the light takes to cross
+
+// ---- 3UP moon, top right (dark mode only) ----
+#define MOON_X        342.0f        // top left of the moon image
+#define MOON_Y        30.0f
+#define MOON_GLOW_PAD 7.0f          // moon_glow.png is this much larger on every side
+#define MOON_PULSE_MS 3000          // the yellow glow breathes slowly
+#define MOON_SHINE_MS 7000          // a "kiran" every 7 s
+#define MOON_SHINE_RUN 500          // light crossing the moon
+#define MOON_STAR_RUN  450          // star twinkle after the light
+
+static void draw_star(float x, float y, float r, float w, u32 c) {   // 4-point sparkle
+    C2D_DrawTriangle(x, y - r, c, x + w, y, c, x - w, y, c, 0.5f);
+    C2D_DrawTriangle(x, y + r, c, x + w, y, c, x - w, y, c, 0.5f);
+    C2D_DrawTriangle(x - r, y, c, x, y - w, c, x, y + w, c, 0.5f);
+    C2D_DrawTriangle(x + r, y, c, x, y - w, c, x, y + w, c, 0.5f);
+}
+
+static void draw_moon(void) {
+    if (!g_moon || !g_bg_inverted) return;
+    u64 now = osGetTime();
+    C2D_Image im = C2D_SpriteSheetGetImage(g_moon, 0);
+    C2D_Image gl = C2D_SpriteSheetGetImage(g_moon, 1);
+    float W = im.subtex->width, H = im.subtex->height;
+    float k = 0.45f + 0.15f * sinf((now % MOON_PULSE_MS) / (float)MOON_PULSE_MS * 2.0f * (float)M_PI);
+    C2D_ImageTint gt;
+    C2D_AlphaImageTint(&gt, k);
+    C2D_DrawImageAt(gl, MOON_X - MOON_GLOW_PAD, MOON_Y - MOON_GLOW_PAD, 0.5f, &gt, 1.0f, 1.0f);
+    C2D_DrawImageAt(im, MOON_X, MOON_Y, 0.5f, NULL, 1.0f, 1.0f);
+
+    u32 t = (u32)(now % MOON_SHINE_MS);
+    if (t < MOON_SHINE_RUN) {                                   // light sweeps left to right
+        const float band = 12, step = 2;
+        float pos = -band + (W + band * 2) * t / MOON_SHINE_RUN;
+        for (float a = 0; a < W; a += step) {
+            float d = fabsf(a + step / 2 - pos);
+            if (d > band) continue;
+            float q = 1 - d / band;
+            C2D_ImageTint lt;
+            C2D_PlainImageTint(&lt, C2D_Color32(0xFF, 0xFF, 0xFF, (u8)(0x60 * q * q)), 1.0f);
+            draw_img_part(im, a, a + step > W ? W : a + step, 0, H, MOON_X + a, MOON_Y, 1, 1, &lt);
+        }
+    }
+    if (t >= MOON_SHINE_RUN - 150 && t < MOON_SHINE_RUN - 150 + MOON_STAR_RUN) {   // then "kiran"
+        float u = (t - (MOON_SHINE_RUN - 150)) / (float)MOON_STAR_RUN;
+        float z = sinf(u * (float)M_PI);                        // grows, then shrinks
+        float sx = MOON_X + W * 0.80f, sy = MOON_Y + H * 0.12f;
+        draw_star(sx, sy, 7 * z, 1.6f * z, C2D_Color32(0xFF, 0xE0, 0x60, (u8)(0x50 * z)));
+        draw_star(sx, sy, 5 * z, 1.1f * z, C2D_Color32(0xFF, 0xFF, 0xFF, (u8)(0xB0 * z)));
+    }
+}
+
+static void draw_logo_anim(float cx, float y) {
+    if (!g_logo) return;
+    u64 now = osGetTime();
+    C2D_Image im = C2D_SpriteSheetGetImage(g_logo, 0);
+    float W = im.subtex->width, H = im.subtex->height;
+    float x0 = cx - W / 2, y0 = y;
+    C2D_DrawImageAt(im, x0, y0, 0.5f, NULL, 1.0f, 1.0f);
+    u32 t = (u32)(now % LOGO_SHINE_MS);
+    if (t >= LOGO_SHINE_RUN) return;
+    const float band = 46, step = 4;
+    float pos = -band + (W + band * 2) * t / LOGO_SHINE_RUN;  // center of the light, across the logo
+    for (float a = 0; a < W; a += step) {
+        float d = fabsf(a + step / 2 - pos);
+        if (d > band) continue;
+        float k = 1 - d / band;
+        C2D_ImageTint lt;
+        C2D_PlainImageTint(&lt, C2D_Color32(0xFF, 0xFF, 0xFF, (u8)(0xA0 * k * k)), 1.0f);   // only where the logo is
+        draw_img_part(im, a, a + step > W ? W : a + step, 0, H, x0 + a, y0, 1, 1, &lt);
+    }
+}
+
 int main(int argc, char **argv) {
     gfxInitDefault();
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
@@ -3043,6 +3338,8 @@ int main(int argc, char **argv) {
     cfguInit();
 
     C3D_RenderTarget *top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+    C3D_RenderTarget *top_r = C2D_CreateScreenTarget(GFX_TOP, GFX_RIGHT);   // right eye (3D)
+    bool s3d_on = false;
     C3D_RenderTarget *bot = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
     g_buf = C2D_TextBufNew(8192);
     g_font = C2D_FontLoadSystem(CFG_REGION_JPN);   // kana/kanji + Latin
@@ -3057,6 +3354,7 @@ int main(int argc, char **argv) {
     invert_sheet(g_shell);                 // inverted in light mode, original colors in dark mode
     g_bowser = C2D_SpriteSheetLoad("romfs:/gfx/bowser.t3x");
     g_lakitu = C2D_SpriteSheetLoad("romfs:/gfx/lakitu.t3x");
+    g_moon = C2D_SpriteSheetLoad("romfs:/gfx/moon.t3x");
     g_chars  = C2D_SpriteSheetLoad("romfs:/gfx/chars.t3x");
     g_lens   = C2D_SpriteSheetLoad("romfs:/gfx/lens.t3x");
     g_back   = C2D_SpriteSheetLoad("romfs:/gfx/back.t3x");
@@ -3094,7 +3392,7 @@ int main(int argc, char **argv) {
     status_init();
     status_poll();
     int notice = 0;                        // shown notice: 0 none, otherwise its notice_queue bit
-    int notice_queue = 0;                  // bit 1: Wi-Fi, bit 2: battery <20%, bit 4: battery <=5%, bit 8: no CTGP-7
+    int notice_queue = 0;                  // bit 1: Wi-Fi, bit 2: battery <20%, bit 4: battery <=5%, bit 8: no CTGP-7, bit 16: SD full
     bool batt_warned = false, batt_crit_warned = false;
     u64 next_poll = osGetTime() + 1000;
     int frame_no = 0;
@@ -3110,6 +3408,8 @@ int main(int argc, char **argv) {
 
     char pack_ver[64];
     load_pack_version(pack_ver, sizeof pack_ver);
+    char ctgp_ver[32];
+    load_ctgp_version(ctgp_ver, sizeof ctgp_ver);
 
     ensure_slots();
     ErrCode err = ERR_NONE;
@@ -3142,6 +3442,7 @@ int main(int argc, char **argv) {
     int dlg_target = 0;
     int dlg_kind = DLG_SWITCH;             // what "Yes" does
     bool dlg_yes = true;
+    int dlg_reg = 0;                       // region dialog cursor (0 JPN, 1 USA, 2 EUR)
 
     MsgKind msg_kind = MSG_NONE;
     int msg_arg = 0;
@@ -3182,6 +3483,7 @@ int main(int argc, char **argv) {
         bool tap = (down & KEY_TOUCH) != 0;
         g_held = held;
         g_touch = tp;
+        if (tap) g_touch0 = tp;
 
         if ((down & KEY_START) && !no_exit) break;
 
@@ -3194,6 +3496,8 @@ int main(int argc, char **argv) {
         if (!installing && osGetTime() >= next_poll) { status_poll(); next_poll = osGetTime() + 1000; }
         if (frame_no == 45 && !g_wifi_on) notice_queue |= 1;          // ~0.75 s after start
         if (frame_no == 45 && !exists("sdmc:/CTGP-7")) notice_queue |= 8;
+        if (frame_no == 45 && sd_free() < SD_WARN_BYTES) notice_queue |= 16;
+        if (g_sd_low) { g_sd_low = false; notice_queue |= 16; }
         if (g_batt >= 0 && g_batt <= 5 && !g_charging) {          // 5% or less: second warning
             if (!batt_crit_warned) {
                 notice_queue |= 4;
@@ -3211,6 +3515,7 @@ int main(int argc, char **argv) {
         int     pv_cur = cursor, pv_set = set_cursor, pv_app = appupd_cursor, pv_ex = ex_cursor;
         int     pv_about = about_cursor, pv_fold = fold_cursor, pv_bg = bg_cursor;
         bool    pv_yes = dlg_yes;
+        int     pv_reg = dlg_reg, pv_kind = dlg_kind;
         bool    pv_appdlg = app_dialog, pv_appyes = app_yes;
         (void)pv_appdlg;
         bool    pv_note = note_dialog >= 0;
@@ -3265,7 +3570,7 @@ int main(int argc, char **argv) {
         int do_rename = -1;       // folder to open the keyboard for
 
         if (!notice && notice_queue && note_dialog < 0 && !dialog) {
-            notice = (notice_queue & 8) ? 8 : (notice_queue & 1) ? 1 : (notice_queue & 2) ? 2 : 4;   // no CTGP-7 first
+            notice = (notice_queue & 8) ? 8 : (notice_queue & 16) ? 16 : (notice_queue & 1) ? 1 : (notice_queue & 2) ? 2 : 4;
             led_flash_alert();
             notice_queue &= ~notice;
         }
@@ -3300,6 +3605,36 @@ int main(int argc, char **argv) {
             } else if (close) {
                 app_dialog = false;
                 sfx_play(SE_WIN_NO);
+            }
+        } else if (dialog && dlg_kind == DLG_EX_FORMAT) {    // left: txt, right: 3gx (B cancels)
+            int pick = -1;
+            if ((down & (KEY_LEFT | KEY_RIGHT)) && EX_3GX_READY[dlg_target]) dlg_yes = !dlg_yes;
+            if (down & KEY_A) pick = dlg_yes ? 0 : 1;
+            if (tap && hit(DLG_YES, tp)) pick = 0;
+            if (tap && hit(DLG_NO, tp) && EX_3GX_READY[dlg_target]) pick = 1;
+            if (down & KEY_B) { dialog = false; sfx_play(SE_WIN_NO); }
+            if (pick == 1 && EX_PICK_REGION(dlg_target)) {      // 3gx of MK7: choose one region next
+                sfx_play(SE_WIN_YES);
+                dlg_kind = DLG_EX_REGION;
+                u8 reg = CFG_REGION_JPN;
+                CFGU_SecureInfoGetRegion(&reg);                  // start on this console's region
+                dlg_reg = reg == CFG_REGION_USA ? 1 : (reg == CFG_REGION_EUR || reg == CFG_REGION_AUS) ? 2 : 0;
+            } else if (pick >= 0) {
+                dialog = false;
+                sfx_play(SE_WIN_YES);
+                ex_start(dlg_target, pick == 1, -1);
+            }
+        } else if (dialog && dlg_kind == DLG_EX_REGION) {    // JPN / USA / EUR (B cancels)
+            int pick = -1;
+            if (down & KEY_LEFT) dlg_reg = (dlg_reg + 2) % 3;
+            if (down & KEY_RIGHT) dlg_reg = (dlg_reg + 1) % 3;
+            if (down & KEY_A) pick = dlg_reg;
+            if (tap) for (int k = 0; k < 3; k++) if (hit(DLG_REG[k], tp)) pick = k;
+            if (down & KEY_B) { dialog = false; sfx_play(SE_WIN_NO); }
+            if (pick >= 0) {
+                dialog = false;
+                sfx_play(SE_WIN_YES);
+                ex_start(dlg_target, true, EX_REG_FILE[pick]);
             }
         } else if (dialog) {
             if (down & (KEY_LEFT | KEY_RIGHT)) dlg_yes = !dlg_yes;
@@ -3491,7 +3826,10 @@ int main(int argc, char **argv) {
                     if (hit(ABOUT_BACK, tp)) act = 2;
                     if (act >= 0) ex_cursor = act;
                 }
-                if (act >= 0 && act < EX_ITEMS) { ok_sfx = true; ex_start(act); }
+                if (act >= 0 && act < EX_ITEMS) {               // choose txt or 3gx first
+                    ok_sfx = true;
+                    dialog = true; dlg_kind = DLG_EX_FORMAT; dlg_target = act; dlg_yes = true;
+                }
                 else if (act == 3 || act == 4) note_dialog = act - 3;
                 else if (act == 2) screen = SCR_MAIN;
             }
@@ -3644,10 +3982,11 @@ int main(int argc, char **argv) {
                 case 3: cfg.sfx = !cfg.sfx; changed = true; break;
                 case 4: cfg.bgm = !cfg.bgm; changed = true; break;
                 case 5: cfg.led = !cfg.led; changed = true; break;
-                case 6: cfg.confirm = !cfg.confirm; changed = true; break;
-                case 7: cfg.exit_after = !cfg.exit_after; changed = true; break;
-                case 8: cfg.check_update = !cfg.check_update; changed = true; break;
-                case 9:
+                case 6: cfg.news = !cfg.news; changed = true; break;
+                case 7: cfg.confirm = !cfg.confirm; changed = true; break;
+                case 8: cfg.exit_after = !cfg.exit_after; changed = true; break;
+                case 9: cfg.check_update = !cfg.check_update; changed = true; break;
+                case 10:
                     if (!lr) {
                         screen = SCR_BGCOLOR;
                         bg_target = -1;
@@ -3658,28 +3997,28 @@ int main(int argc, char **argv) {
                         t_seek = false;
                     }
                     break;
-                case 10:
+                case 11:
                     if (!lr) { screen = SCR_APPUPD; appupd_cursor = 0; }
                     break;
-                case 11:                                // restart (.cia only)
+                case 12:                                // restart (.cia only)
                     if (!lr) { dialog = true; dlg_kind = DLG_RESTART; dlg_yes = true; }
                     break;
-                case 12:
+                case 13:
                     if (!lr) { dialog = true; dlg_kind = DLG_RESET; dlg_yes = false; }
                     break;
-                case 13:
+                case 14:
                     if (!lr) {
                         load_pack_version(pack_ver, sizeof pack_ver);
                         screen = SCR_ABOUT;
                         about_cursor = 0;
                     }
                     break;
-                case 14:
+                case 15:
                     if (!lr) screen = SCR_MAIN;
                     break;
                 }
                 if (act < LIST_N) ok_sfx = true;
-                if (act >= 9 && act <= 13) ok_plain = true;   // background color / app update / restart / reset / about
+                if (act >= 10 && act <= 14) ok_plain = true;   // background color / app update / restart / reset / about
                 if (changed) {
                     config_save(&cfg);
                     apply_theme(cfg.dark);
@@ -3781,7 +4120,8 @@ int main(int argc, char **argv) {
                 else if (cursor != pv_cur || set_cursor != pv_set ||
                          appupd_cursor != pv_app || dlg_yes != pv_yes ||
                          app_yes != pv_appyes || ex_cursor != pv_ex || about_cursor != pv_about ||
-                         fold_cursor != pv_fold || bg_cursor != pv_bg) se = SE_CURSOR;
+                         fold_cursor != pv_fold || bg_cursor != pv_bg ||
+                         (dlg_kind == DLG_EX_REGION && pv_kind == DLG_EX_REGION && dlg_reg != pv_reg)) se = SE_CURSOR;
             }
             if (se >= 0) sfx_play(se);
 
@@ -3818,6 +4158,7 @@ int main(int argc, char **argv) {
             bool ex_now = ex_busy();
             if ((upd_done && !was_upd_done) ||
                 (was_ex_busy >= 0 && !ex_now && g_ex.state[was_ex_busy] == EX_DONE)) { sfx_play(SE_COMPLETE); led_flash_done(); }   // .cia: after installing
+            if (upd_done && !was_upd_done && cfg.news) news_send_update(S, g_app.remote);
             was_upd_done = upd_done;
             was_ex_busy = ex_now ? g_ex.item : -1;
         }
@@ -3825,6 +4166,7 @@ int main(int argc, char **argv) {
         no_exit = upd_busy() || ex_busy() ||
                   (g_app.state == CHK_RUNNING && (manual_check || screen == SCR_APPUPD));
         aptSetHomeAllowed(!no_exit);
+        aptSetSleepAllowed(!(upd_busy() || ex_busy()));   // closing the lid must not stop a download or install
 
         bgm_update(cfg.bgm && !quit_pending && !installing);    // stop BGM while exiting / launching / installing
 
@@ -3880,19 +4222,41 @@ int main(int argc, char **argv) {
         C2D_TextBufClear(g_buf);
 
         // top screen
-        C2D_TargetClear(top, COL_BG);
-        C2D_SceneBegin(top);
+        // Top screen, once per eye with the 3D slider. Each layer is shifted by its own depth:
+        // background behind the screen, racers just above it, text on the screen, logo and Lakitu in front.
+        float slider = osGet3DSliderState();
+        bool s3d = slider > 0.0f;
+        if (s3d != s3d_on) { gfxSet3D(s3d); s3d_on = s3d; }
+        if (!installing) kart_update();
+        for (int eye = 0; eye < (s3d ? 2 : 1); eye++) {
+        float e = (eye ? 1.0f : -1.0f) * slider;   // + right eye
+        C3D_RenderTarget *tt = eye ? top_r : top;
+        C2D_TargetClear(tt, COL_BG);
+        C2D_SceneBegin(tt);
+        C2D_ViewReset();                            // background: scaled a little so its edges stay covered
+        C2D_ViewTranslate(200 + e * DEPTH_BG, 120);
+        C2D_ViewScale(1.03f, 1.03f);
+        C2D_ViewTranslate(-200, -120);
         draw_bg(g_top_bg, 400, 240);
-        if (!installing) {
-            draw_tape(g_top_bg, 400, 240, TOP_TAPE_Y0, TOP_TAPE_Y1, 0, 240);
-            kart_update();
-            draw_kart();
-        }
-        draw_status_bar(S, cfg.clock24);
-        if (!draw_logo(0, 200, 4)) {
+        if (!installing) draw_tape(g_top_bg, 400, 240, TOP_TAPE_Y0, TOP_TAPE_Y1, 0, 240);
+        C2D_ViewReset();
+        C2D_ViewTranslate(e * DEPTH_MOON, 0);         // in the sky, just in front of the background
+        draw_moon();
+        C2D_ViewReset();
+        C2D_ViewTranslate(e * DEPTH_RACERS, 0);
+        if (!installing) draw_kart();
+        C2D_ViewReset();
+        C2D_ViewTranslate(e * DEPTH_LAKITU, 0);
+        if (!installing) draw_lakitu(osGetTime());
+        C2D_ViewReset();
+        C2D_ViewTranslate(e * DEPTH_LOGO, 0);
+        if (g_logo) draw_logo_anim(200, 4);
+        else {
             draw_text_center(APP_NAME_1, 200, 20, 0.85f, COL_YELLOW);
             draw_text_center(APP_NAME_2, 200, 54, 0.85f, COL_YELLOW);
         }
+        C2D_ViewReset();                            // text and status: on the screen plane
+        draw_status_bar(S, cfg.clock24);
         if (err != ERR_NONE) {
             draw_text(errtxt, 14, 114, 0.55f, COL_RED);
             draw_text(S->err_footer, 14, 172, 0.5f, COL_GRAY);
@@ -3909,19 +4273,24 @@ int main(int argc, char **argv) {
         draw_text(S->help, 14, 220, 0.38f, COL_GRAY);
         {
             char pk[128];
-            snprintf(pk, sizeof pk, "%s: %s", S->pack_label, pack_ver[0] ? pack_ver : "---");
-            draw_text_right(APP_VERSION, 390, 182, 0.5f, COL_GRAY);
-            draw_text_right(pk, 390, 200, 0.5f, COL_GRAY);
+            snprintf(pk, sizeof pk, "%s: %s", S == &STR_JA ? "パック" : "Pack", pack_ver[0] ? pack_ver : "---");
+            draw_text_right(APP_VERSION, 390, 182, 0.6f, COL_GRAY);
+            draw_text_right(pk, 390, 203, 0.42f, COL_GRAY);
+            snprintf(pk, sizeof pk, "CTGP-7: %s", ctgp_ver[0] ? ctgp_ver : "---");
+            draw_text_right(pk, 390, 217, 0.42f, COL_GRAY);
         }
+        }   // eyes
 
         // bottom screen
         C2D_TargetClear(bot, COL_BG);
         C2D_SceneBegin(bot);
+        g_top_layer = VIS_NOW;
+        g_layer = 0;
         draw_bg(g_bot_bg, 320, 240);
         draw_particles(cfg.dark);
 
         if (screen == SCR_MAIN) {
-            draw_text_center(S->select_slot, 160, 8, 0.7f, COL_YELLOW);
+            draw_title(S->select_slot, 8, 0.7f);
             g_btn_sc = 0.72f;
             g_btn_glass = false;                        // only these keep the image buttons
             for (int i = 0; i < SLOTS; i++) {
@@ -3959,8 +4328,8 @@ int main(int argc, char **argv) {
                 snprintf(ttl, sizeof ttl, S->color_title, ed_names[bg_target]);   // the name as shown in the folder menu
                 text_size(ttl, tsc, &tw, &th);
                 if (tw > 300) tsc *= 300 / tw;
-                draw_text_center(ttl, 160, 8, tsc, COL_YELLOW);
-            } else draw_text_center(S->set_bgcolor, 160, 8, 0.65f, COL_YELLOW);
+                draw_title(ttl, 8, tsc);
+            } else draw_title(S->set_bgcolor, 8, 0.65f);
             float pos = BG_BAR_X + (ed_hue < 0 ? 0 : ed_hue) / 359.0f * BG_BAR_W;
             {                                           // color bar: every hue that can be chosen
                 float dx = slide_dx(0), step = BG_BAR_W / 36.0f;
@@ -3999,7 +4368,7 @@ int main(int argc, char **argv) {
             g_btn_sc = 0.6f;
             draw_back_tab(slid(ABOUT_BACK, 4), !dialog && bg_cursor == 3, true);
         } else if (screen == SCR_FOLDERS) {
-            draw_text_center(S->custom_title, 160, 6, 0.75f, COL_YELLOW);
+            draw_title(S->custom_title, 6, 0.75f);
             draw_note_button(slid(FOLD_NOTE, 0), FOLD_NOTE_HIT, note_dialog < 0 && fold_cursor == 6);
             for (int i = 0; i < SLOTS; i++) {
                 Rect br = slid(FOLD_BTN_R[i], i);
@@ -4060,16 +4429,18 @@ int main(int argc, char **argv) {
                 g_tip_sc = 0.5f;
             }
         } else if (screen == SCR_EXTRA) {
-            draw_text_center(APP_TEAM, 160, 6, 0.75f, COL_YELLOW);
+            draw_title(APP_TEAM, 6, 0.75f);
             bool busy = ex_busy();
             for (int i = 0; i < EX_ITEMS; i++) {
                 // version (first line of the reference file on GitHub)
                 const char *vt;
                 char vbuf[96];
                 if (g_exver[i].state == CHK_DONE) {
-                    bool has_ver = strstr(g_exver[i].remote, "Ver") || strstr(g_exver[i].remote, "ver") ||
-                                   strstr(g_exver[i].remote, "VER");
-                    snprintf(vbuf, sizeof vbuf, has_ver ? "%s" : "Ver: %s", g_exver[i].remote);
+                    char num[32];
+                    if (pick_version(g_exver[i].remote, num, sizeof num))
+                        snprintf(vbuf, sizeof vbuf, "Ver.%s", num);        // only the number from the first line
+                    else
+                        snprintf(vbuf, sizeof vbuf, "%s", g_exver[i].remote);
                     vt = vbuf;
                 } else if (g_exver[i].state == CHK_RUNNING) {
                     vt = S->checking;
@@ -4098,8 +4469,17 @@ int main(int argc, char **argv) {
                 // status
                 char st[128] = "";
                 u32 sc = COL_GREEN;
-                if (g_ex.state[i] == EX_RUNNING) { snprintf(st, sizeof st, S->ex_downloading, g_ex.done, EX_COUNT[i]); sc = COL_WHITE; }
-                else if (g_ex.state[i] == EX_DONE) snprintf(st, sizeof st, S->ex_done, EX_COUNT[i]);
+                if (g_ex.state[i] == EX_RUNNING) { snprintf(st, sizeof st, S->ex_downloading, g_ex.done, g_ex.total[i]); sc = COL_WHITE; }
+                else if (g_ex.state[i] == EX_DONE) {
+                    int wh = g_ex.where[i];
+                    if (wh == -2) snprintf(st, sizeof st, S->ex_done, g_ex.total[i]);
+                    else {                                       // 3gx: show where it went
+                        char dir[80];
+                        if (wh >= 0) snprintf(dir, sizeof dir, PLUGINS_DIR "/%.16s", EX_FILES[i][wh]);
+                        else snprintf(dir, sizeof dir, PLUGINS_DIR);
+                        snprintf(st, sizeof st, S == &STR_JA ? "完了: %s に配置しました" : "Done. Saved to %s", dir);
+                    }
+                }
                 else if (g_ex.state[i] == EX_FAIL) { snprintf(st, sizeof st, "%s", S->ex_fail); sc = COL_RED; }
                 if (st[0]) {
                     float w, h;
@@ -4110,7 +4490,7 @@ int main(int argc, char **argv) {
             }
             draw_back_tab(slid(ABOUT_BACK, EX_ITEMS), !dialog && ex_cursor == 2, !busy);
         } else if (screen == SCR_ABOUT) {
-            draw_text_center(S->about, 160, 6, 0.7f, COL_YELLOW);
+            draw_title(S->about, 6, 0.7f);
             if (!draw_logo(1, 160 + slide_dx(0), 26)) {
                 draw_text_center(APP_NAME_1, 160 + slide_dx(0), 34, 0.75f, COL_WHITE);
                 draw_text_center(APP_NAME_2, 160 + slide_dx(0), 62, 0.75f, COL_WHITE);
@@ -4131,7 +4511,7 @@ int main(int argc, char **argv) {
             draw_back_tab(slid(ABOUT_BACK, 6), note_dialog < 0 && about_cursor == 0, true);
             draw_note_button(slid(ABOUT_NOTE, 6), ABOUT_NOTE_HIT, note_dialog < 0 && about_cursor == 1);
         } else if (screen == SCR_APPUPD) {
-            draw_text_center(S->appupd_title, 160, 4, 0.7f, COL_YELLOW);
+            draw_title(S->appupd_title, 4, 0.7f);
             snprintf(line, sizeof line, "%s: %s", S->current_label, APP_VERSION);
             draw_text_center(line, 160 + slide_dx(0), 32, 0.5f, COL_GRAY);
             bool busy = upd_busy();
@@ -4200,16 +4580,16 @@ int main(int argc, char **argv) {
         } else {
             const char *langname = cfg.lang == 0 ? S->lang_auto : (cfg.lang == 1 ? "日本語" : "English");
             const char *labels[LIST_N] = {
-                S->set_language, S->set_clock, S->set_dark, S->set_sfx, S->set_bgm, S->set_led, S->set_confirm, S->set_exit, S->set_check,
+                S->set_language, S->set_clock, S->set_dark, S->set_sfx, S->set_bgm, S->set_led, S->set_news, S->set_confirm, S->set_exit, S->set_check,
                 S->set_bgcolor, S->set_appupd, S->set_restart, S->set_reset, S->about
             };
-            const char *values[LIST_N] = { langname, cfg.clock24 ? S->h24 : S->h12, "", "", "", "", "", "", "", "", "", "", "", "" };
+            const char *values[LIST_N] = { langname, cfg.clock24 ? S->h24 : S->h12, "", "", "", "", "", "", "", "", "", "", "", "", "" };
             // ON/OFF items (shown as switches); NULL = not a switch
             int *toggles[LIST_N] = {
-                NULL, NULL, &cfg.dark, &cfg.sfx, &cfg.bgm, &cfg.led, &cfg.confirm, &cfg.exit_after, &cfg.check_update,
+                NULL, NULL, &cfg.dark, &cfg.sfx, &cfg.bgm, &cfg.led, &cfg.news, &cfg.confirm, &cfg.exit_after, &cfg.check_update,
                 NULL, NULL, NULL, NULL, NULL
             };
-            static const bool centered[LIST_N] = { false, false, false, false, false, false, false, false, false, true, true, true, true, true };
+            static const bool centered[LIST_N] = { false, false, false, false, false, false, false, false, false, false, true, true, true, true, true };
             static float sw_anim[LIST_N];
             static bool sw_init = false;
             for (int i = 0; i < LIST_N; i++) {          // slide knobs toward their state
@@ -4234,9 +4614,9 @@ int main(int argc, char **argv) {
                 r = slid(r, pos > first_row ? pos - first_row : 0);
                 g_btn_reserve = toggles[i] ? SW_W + 10 : 0;
                 draw_button(r, labels[i], values[i], sel, false, true, centered[i]);
-                if (i == 10) draw_label_mark(g_icons, 2, r, labels[i], sel, 1.0f);    // app update (download)
-                if (i == 11) draw_label_mark(g_icons, 0, r, labels[i], sel, 1.0f);   // restart (circular arrow)
-                if (i == 12) draw_label_mark(g_trash, 0, r, labels[i], sel, 1.0f);   // reset settings
+                if (i == 11) draw_label_mark(g_icons, 2, r, labels[i], sel, 1.0f);    // app update (download)
+                if (i == 12) draw_label_mark(g_icons, 0, r, labels[i], sel, 1.0f);   // restart (circular arrow)
+                if (i == 13) draw_label_mark(g_trash, 0, r, labels[i], sel, 1.0f);   // reset settings
                 if (toggles[i]) draw_switch(r, sel, sw_anim[i], *toggles[i] != 0);
             }
             g_btn_reserve = 0;
@@ -4267,6 +4647,7 @@ int main(int argc, char **argv) {
         }
 
         if (dialog) {
+            g_layer = 5;
             C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
             draw_window(DLG_BOX);
             if (dlg_kind == DLG_RESET) snprintf(line, sizeof line, "%s", S->confirm_reset);
@@ -4274,6 +4655,9 @@ int main(int argc, char **argv) {
             else if (dlg_kind == DLG_RESTART) snprintf(line, sizeof line, "%s", S->confirm_restart);
             else if (dlg_kind == DLG_FOLD_SAVE) snprintf(line, sizeof line, "%s", S->confirm_fold_save);
             else if (dlg_kind == DLG_FOLD_RESET) snprintf(line, sizeof line, "%s", S->confirm_fold_reset);
+            else if (dlg_kind == DLG_EX_FORMAT) snprintf(line, sizeof line, "%s", S->ex_format);
+            else if (dlg_kind == DLG_EX_REGION)
+                snprintf(line, sizeof line, "%s", S == &STR_JA ? "配置する地域を選んでください。" : "Choose the region to install to.");
             else snprintf(line, sizeof line, S->confirm_msg, g_names[dlg_target - 1]);
             {                                           // a long folder name must fit the window
                 float dw, dh, dsc = 0.6f;
@@ -4281,11 +4665,21 @@ int main(int argc, char **argv) {
                 if (dw > DLG_BOX.w - 12) dsc *= (DLG_BOX.w - 12) / dw;
                 draw_text_center(line, 160, DLG_BOX.y + 22, dsc, COL_WHITE);
             }
-            draw_button(DLG_YES, S->yes, "", dlg_yes, false, true, true);
-            draw_button(DLG_NO, S->no, "", !dlg_yes, false, true, true);
+            if (dlg_kind == DLG_EX_REGION) {
+                for (int k = 0; k < 3; k++) draw_button(DLG_REG[k], EX_REG_BTN[k], "", dlg_reg == k, false, true, true);
+            } else if (dlg_kind == DLG_EX_FORMAT) {
+                draw_button(DLG_YES, "txt", "", dlg_yes, false, true, true);
+                draw_button(DLG_NO, "3gx", "", !dlg_yes, false, EX_3GX_READY[dlg_target], true);
+                if (!EX_3GX_READY[dlg_target])
+                    draw_text_center(S->coming_soon, DLG_NO.x + DLG_NO.w / 2, DLG_NO.y + DLG_NO.h + 3, 0.42f, COL_GRAY);
+            } else {
+                draw_button(DLG_YES, S->yes, "", dlg_yes, false, true, true);
+                draw_button(DLG_NO, S->no, "", !dlg_yes, false, true, true);
+            }
         }
 
         if (upd_dialog) {
+            g_layer = 3;
             C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
             draw_window(UPD_BOX);
             draw_text_center(S->update_msg, 160, UPD_BOX.y + 14, 0.55f, COL_YELLOW);
@@ -4295,6 +4689,7 @@ int main(int argc, char **argv) {
             draw_text_center(line, 160, UPD_BOX.y + 80, 0.55f, COL_GREEN);
             draw_button(DLG_OK, S->ok, "", true, false, true, true);
         } else if (app_dialog) {
+            g_layer = 4;
             C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
             draw_window(UPD_BOX);
             draw_text_center(S->app_dlg_msg, 160, UPD_BOX.y + 14, 0.55f, COL_YELLOW);
@@ -4307,6 +4702,7 @@ int main(int argc, char **argv) {
         }
 
         if (notice) {
+            g_layer = 2;
             C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
             draw_window(UPD_BOX);
             {                                           // important: red frame over the window's own
@@ -4328,12 +4724,13 @@ int main(int argc, char **argv) {
                 if (nl) draw_text_center(nl + 1, 160, UPD_BOX.y + 66, 0.55f, COL_WHITE);
             }
             else
-                draw_text_center(notice == 8 ? S->notice_ctgp : notice == 1 ? S->notice_wifi : S->notice_batt,
+                draw_text_center(notice == 8 ? S->notice_ctgp : notice == 16 ? S->notice_sd : notice == 1 ? S->notice_wifi : S->notice_batt,
                                  160, UPD_BOX.y + 56, 0.58f, COL_WHITE);
             draw_button(DLG_OK, S->ok, "", true, false, true, true);
         }
 
         if (note_dialog >= 0) {
+            g_layer = 1;
             C2D_DrawRectSolid(0, 0, 0.5f, 320, 240, C2D_Color32(0, 0, 0, 170));
             draw_window(UPD_BOX);
             if (note_dialog == NOTE_AI) {
@@ -4369,6 +4766,7 @@ int main(int argc, char **argv) {
     if (g_shell)  C2D_SpriteSheetFree(g_shell);
     if (g_bowser) C2D_SpriteSheetFree(g_bowser);
     if (g_lakitu) C2D_SpriteSheetFree(g_lakitu);
+    if (g_moon) C2D_SpriteSheetFree(g_moon);
     if (g_chars)  C2D_SpriteSheetFree(g_chars);
     if (g_lens)   C2D_SpriteSheetFree(g_lens);
     if (g_back)   C2D_SpriteSheetFree(g_back);
@@ -4381,6 +4779,8 @@ int main(int argc, char **argv) {
     if (g_seek)   C2D_SpriteSheetFree(g_seek);
     C2D_TextBufDelete(g_buf);
     C2D_FontFree(g_font);
+    aptSetSleepAllowed(true);
+    gfxSet3D(false);
     C2D_Fini();
     C3D_Fini();
     cfguExit();
