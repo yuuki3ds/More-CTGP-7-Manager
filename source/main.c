@@ -1,4 +1,4 @@
-// More！CTGP-7 Manager Ver.1.2.7 - character folder manager for More!CTGP-7
+// More！CTGP-7 Manager Ver.1.2.9 - character folder manager for More!CTGP-7
 // Target: sdmc:/CTGP-7/MyStuff/Characters{1,2,3}
 // The folder named "Characters" (no number) is the active one.
 // No state file for folders: the active slot is detected from which folders exist.
@@ -25,7 +25,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
-#define APP_VERSION "Ver.1.2.8"
+#define APP_VERSION "Ver.1.2.9"
 #define APP_NAME_1  "More！CTGP-7"
 #define APP_NAME_2  "Manager"          // used only if the logo image fails to load
 #define APP_AUTHOR  "yk"

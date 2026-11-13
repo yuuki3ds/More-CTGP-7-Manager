@@ -1,11 +1,12 @@
-# More！CTGP-7 Manager — 引き継ぎメモ(Ver.1.2.8 開発中、1.2.7 リリース済み)
+# More！CTGP-7 Manager — 引き継ぎメモ(Ver.1.2.9 開発中、1.2.8 リリース済み)
 
 Claude Code ではこのフォルダをそのまま作業フォルダにしてください(`CLAUDE.md` に作業ルールがあります)。
 これまでのやり取りは `docs/conversation_log.md` にあります。
 
 ## バージョンの状況
-- リリース済み: **1.2.7**(2026-11-09)。コード上は `APP_VERSION "Ver.1.2.8"`(1.2.8 開発中)
-- 1.2.8 でここまでに入れた変更(まだ未リリース):
+- リリース済み: **1.2.8**(2026-11-13)。コード上は `APP_VERSION "Ver.1.2.9"`(1.2.9 開発中)
+- 1.2.9 でここまでに入れた変更: まだなし
+- 1.2.8 の主な内容(Claude Code の環境でビルド):
   - ボタンの沈み込みを、タッチを始めたボタンだけにした。ウィンドウ表示中は一番手前のウィンドウのボタンだけ沈む
   - ダークモードのみ、上画面右上に 3UP ムーン(白黒、縁がうっすら黄色く光る、7秒ごとに控えめにキラン)
 - 1.2.7 の主な内容: スリープ禁止 / SD 空き容量の通知 / 3D 表示 / CTGP-7 バージョン表示 / ロゴの光 / Extra のバージョン番号表示 /
@@ -217,11 +218,19 @@ Claude Code ではこのフォルダをそのまま作業フォルダにして�
 - `romfs/cacert.pem`(https://curl.se/ca/cacert.pem)が必要
 - `make clean` → `make`
 
+## Claude Code の環境でのビルド(1.2.8 から)
+- devkitPro 公式の Docker イメージ `devkitpro/devkitarm` で `make`(フォルダ名を `application` にして TARGET を合わせる)
+- リポジトリの `makerom.exe` / `bannertool.exe` は Wine で実行
+- Wine 経由だと bannertool の `-s` / `-l` の全角「！」が化ける(「Moreo<」のようになる)。
+  `python3 tools/fix_smdh.py icon.bin "More！CTGP-7 Manager" "Character folder manager for More！CTGP-7" "yk / 3DSProject Team"` で直してから makerom に渡す
+  (直した icon.bin は 1.2.7 のものとバイト単位で一致)
+- GitHub のリリース作成はこちらのツールではできないので、ユーザーが行う
+
 ## CIA 作成
 ```
 .\bannertool.exe makebanner -i banner.png -a banner.wav -o banner.bin
 .\bannertool.exe makesmdh -s "More！CTGP-7 Manager" -l "Character folder manager for More！CTGP-7" -p "yk / 3DSProject Team" -i icon.png -o icon.bin
-.\makerom.exe -f cia -o MoreCTGP7Manager.cia -elf application.elf -rsf app.rsf -icon icon.bin -banner banner.bin -exefslogo -target t -major 1 -minor 2 -micro 8
+.\makerom.exe -f cia -o MoreCTGP7Manager.cia -elf application.elf -rsf app.rsf -icon icon.bin -banner banner.bin -exefslogo -target t -major 1 -minor 2 -micro 9
 ```
 - `app.rsf` には DSP メモリ(IORegisterMapping)・am:net・soc:U・mcu::HWC などの権限を設定済み
 - バージョンは `main.c` の `APP_VERSION`、makerom の -major/-minor/-micro、appver.ini の3か所を揃える
