@@ -41,7 +41,7 @@ GFXBUILD	:=	$(BUILD)
 ROMFS		:=	romfs
 GFXBUILD	:=	$(ROMFS)/gfx
 APP_TITLE	:=	More！CTGP-7 Manager
-APP_DESCRIPTION :=	v1.2.7 Charactersフォルダの切り替え！
+APP_DESCRIPTION :=	v1.2.8 Charactersフォルダの切り替え！
 APP_AUTHOR	:=	yk/3DSProject Team
 
 #---------------------------------------------------------------------------------
